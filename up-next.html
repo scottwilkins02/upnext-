@@ -146,6 +146,18 @@ footer { padding-block: 30px; display: flex; gap: 16px; justify-content: center;
     <button class="ghost" id="devClose" type="button">Close</button>
   </div>
 </dialog>
+<dialog id="stuckDialog">
+  <h3>Spotify didn't start</h3>
+  <p>Spotify accepted the request but nothing is playing. On iPhone and iPad this usually means the Spotify app went to sleep in the background.</p>
+  <p>Open the Spotify app, play and pause any song so it wakes up, then come back and tap Try again. Or open this item straight in Spotify.</p>
+  <div class="actions" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <a class="ghost" id="stuckOpen" href="#" target="_blank" rel="noopener" style="text-decoration:none">Open in Spotify</a>
+    <span class="actions">
+      <button class="ghost" id="stuckClose" type="button">Close</button>
+      <button class="ghost" id="stuckRetry" type="button">Try again</button>
+    </span>
+  </div>
+</dialog>
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -372,7 +384,7 @@ function showRow(s, mode, pick) {
           mode === 'order' ? 'In order · switch to newest' : 'Newest · switch to in order'),
         ep.url && h('a', { class: 'linkish', href: ep.url, target: '_blank', rel: 'noopener' }, 'Open in Spotify'))),
     h('button', { class: 'play', type: 'button', 'aria-label': 'Play ' + ep.name, html: ICON_PLAY,
-      onclick: () => play({ uris: [ep.uri], position_ms: pick.status === 'resume' ? rp.resume_position_ms : 0 }, ep.name) }));
+      onclick: () => play({ uris: [ep.uri], position_ms: pick.status === 'resume' ? rp.resume_position_ms : 0 }, ep.name, null, ep.url) }));
 }
 function renderProgress() { const p = $('progress'); if (p && state.showsLoading) p.textContent = state.progress; }
 
@@ -449,23 +461,60 @@ function listRow(p) {
           : '<svg viewBox="0 0 24 24"><path d="M12 15.4l-3.8 2.3 1-4.3-3.3-2.9 4.4-.4L12 6l1.7 4.1 4.4.4-3.3 2.9 1 4.3zM22 9.3l-7.2-.6L12 2 9.2 8.7 2 9.3 7.5 14l-1.6 7L12 17.3 18.1 21l-1.6-7z"/></svg>',
         onclick: () => togglePin(p.uri) }),
       h('button', { class: 'play', type: 'button', 'aria-label': 'Play ' + (p.name || 'playlist'), html: ICON_PLAY,
-        onclick: () => play({ context_uri: p.uri }, p.name) })));
+        onclick: () => play({ context_uri: p.uri }, p.name, null, p.url) })));
 }
 
 /* ---------- playback ---------- */
 let pendingPlay = null;
-async function play(body, name, deviceId) {
+/* Spotify can accept a play command (no error) yet nothing plays, most often when the target
+   device is asleep in the background. So we pick an explicit device, then check it really started. */
+async function pickDevice() {
+  const r = await api('/me/player/devices');
+  const devs = ((r && r.devices) || []).filter(d => !d.is_restricted);
+  return devs.find(d => d.is_active) || devs.find(d => d.id === S.get('device')) || (devs.length === 1 ? devs[0] : null);
+}
+async function isPlaying(body) {
+  const p = await api('/me/player?additional_types=episode');
+  state.player = p; paintPlayer();
+  if (!p || !p.is_playing || !p.item) return false;
+  if (body.uris) return body.uris.includes(p.item.uri);
+  if (body.context_uri) return !p.context || p.context.uri === body.context_uri;
+  return true;
+}
+async function play(body, name, deviceId, url) {
+  const item = { body, name, url };
   try {
-    await api('/me/player/play' + (deviceId ? '?device_id=' + encodeURIComponent(deviceId) : ''), { method: 'PUT', body });
-    toast('Playing ' + (name || ''));
+    toast('Starting ' + (name || '') + '…', 6000);
+    let dev = deviceId ? { id: deviceId } : await pickDevice();
+    if (!dev) { pendingPlay = item; $('toast').hidden = true; openDevices(); return; }
+    const playOn = id => api('/me/player/play?device_id=' + encodeURIComponent(id), { method: 'PUT', body });
+    await playOn(dev.id);
+    await sleep(1500);
+    if (!(await isPlaying(body))) {
+      // Second attempt: wake the device by transferring playback to it, then play again.
+      await api('/me/player', { method: 'PUT', body: { device_ids: [dev.id], play: true } }).catch(() => {});
+      await sleep(1200);
+      await playOn(dev.id);
+      await sleep(1800);
+      if (!(await isPlaying(body))) { $('toast').hidden = true; showStuck(item); return; }
+    }
+    S.set('device', dev.id);
     pendingPlay = null;
-    setTimeout(refreshPlayer, 900);
+    toast('Playing ' + (name || ''));
   } catch (e) {
+    $('toast').hidden = true;
     if (handleAuthError(e)) return;
-    if (e.status === 404 || e.reason === 'NO_ACTIVE_DEVICE') { pendingPlay = { body, name }; openDevices(); return; }
+    if (e.status === 404 || e.reason === 'NO_ACTIVE_DEVICE') { pendingPlay = item; S.del('device'); openDevices(); return; }
     if (e.status === 403) { toast(e.reason === 'PREMIUM_REQUIRED' ? 'Playback control needs Spotify Premium.' : 'Spotify refused: ' + e.message, 5000); return; }
     toast('Could not start playback: ' + e.message, 5000);
   }
+}
+function showStuck(item) {
+  const d = $('stuckDialog');
+  $('stuckOpen').hidden = !item.url;
+  if (item.url) $('stuckOpen').href = item.url;
+  $('stuckRetry').onclick = () => { d.close(); play(item.body, item.name, null, item.url); };
+  d.showModal();
 }
 async function openDevices() {
   const d = $('devDialog'); if (!d.open) d.showModal();
@@ -478,7 +527,8 @@ async function openDevices() {
     for (const dv of devs) list.append(h('button', { class: 'dev', type: 'button', disabled: dv.is_restricted || null,
       onclick: async () => {
         d.close();
-        if (pendingPlay) await play(pendingPlay.body, pendingPlay.name, dv.id);
+        S.set('device', dv.id);
+        if (pendingPlay) await play(pendingPlay.body, pendingPlay.name, dv.id, pendingPlay.url);
         else { try { await api('/me/player', { method: 'PUT', body: { device_ids: [dv.id], play: false } }); toast('Switched to ' + dv.name); setTimeout(refreshPlayer, 900); } catch (e) { toast('Could not switch: ' + e.message); } }
       } }, h('b', { text: dv.name }), h('small', { text: dv.type + (dv.is_active ? ' · active now' : '') + (dv.is_restricted ? ' · cannot be controlled' : '') })));
   } catch (e) { if (handleAuthError(e)) return; list.replaceChildren(h('div', { class: 'err', text: e.message })); }
@@ -573,6 +623,7 @@ async function boot() {
   for (const b of document.querySelectorAll('.tab')) b.addEventListener('click', () => switchTab(b.dataset.tab));
   $('deviceBtn').addEventListener('click', () => { pendingPlay = null; openDevices(); });
   $('devRefresh').addEventListener('click', openDevices);
+  $('stuckClose').addEventListener('click', () => $('stuckDialog').close());
   $('devClose').addEventListener('click', () => { pendingPlay = null; $('devDialog').close(); });
   $('nowToggle').addEventListener('click', () => playerCmd(state.player && state.player.is_playing ? '/me/player/pause' : '/me/player/play', 'PUT'));
   $('nowNext').addEventListener('click', () => playerCmd('/me/player/next', 'POST'));
