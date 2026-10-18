@@ -50,8 +50,12 @@ h1 span { color: var(--accent); }
   border-radius: 999px; padding: 6px 12px; font-size: 13px; color: var(--muted); max-width: 55%; }
 .device b { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qwrap { position: relative; }
-.q { width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 11px 40px 11px 14px; }
-.qclear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.q { width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 11px 84px 11px 14px; }
+.qclear { position: absolute; right: 44px; top: 50%; transform: translateY(-50%); }
+.qmic { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.qmic[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .qmic[aria-pressed="true"] { animation: pulse 1.2s ease-in-out infinite; } }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent); } }
 .tabs { display: flex; gap: 4px; padding-block: 10px; }
 .tab { flex: 1; border: 0; background: transparent; padding: 9px 0; border-radius: 10px; font-weight: 600; color: var(--muted); }
 .tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
@@ -176,6 +180,7 @@ footer small { color: var(--muted); text-align: center; }
     </div>
     <div class="qwrap">
       <input class="q" id="q" type="search" placeholder="Search songs, artists, podcasts, playlists" aria-label="Search" autocomplete="off" enterkeyhint="search">
+      <button class="icon qmic" id="qmic" type="button" aria-label="Voice command" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1a7 7 0 0 0 6-6.9z"/></svg></button>
       <button class="icon qclear" id="qclear" type="button" aria-label="Clear search" hidden><svg viewBox="0 0 24 24"><path d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg></button>
     </div>
     <div class="tabs" role="tablist">
@@ -1539,6 +1544,170 @@ function renderHistoryStats(main) {
   main.append(h('div', { class: 'hint', text: 'Logged since ' + new Date(hist[0].t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + '. Spotify only shares your last 50 songs, so this fills in over time. Podcasts are only counted when they play through Up Next or while it is open.' }));
 }
 
+/* ---------- voice commands ---------- */
+const NUMS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, forty: 40, 'forty five': 45, fifty: 50, sixty: 60, ninety: 90 };
+function norm(t) { return (t || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+function matchScore(q, name) {
+  const a = norm(q).replace(/^the /, ''), b = norm(name).replace(/^the /, '');
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (b.startsWith(a) || a.startsWith(b)) return 0.9;
+  if (b.includes(a) || a.includes(b)) return 0.8;
+  const ta = new Set(a.split(' ')), tb = b.split(' ');
+  const hit = tb.filter(w => ta.has(w)).length;
+  return hit / Math.max(ta.size, tb.length) * 0.75;
+}
+function best(list, q, nameFn, min = 0.5) {
+  let top = null, score = 0;
+  for (const x of list) { const sc = matchScore(q, nameFn(x)); if (sc > score) { top = x; score = sc; } }
+  return score >= min ? top : null;
+}
+/* Turns a spoken sentence into an action. Exported shape: { action, arg, ms } */
+function parseCommand(text) {
+  let t = norm(text).replace(/^(hey )?(up next|spotify)\s+/, '').replace(/^(please|can you|could you)\s+/, '').replace(/\s+please$/, '');
+  if (!t) return { action: 'none' };
+  if (/^(pause|stop|pause it|stop it|pause (the )?music)$/.test(t)) return { action: 'pause' };
+  if (/^(play|resume|continue|carry on|unpause|play it)$/.test(t)) return { action: 'resume' };
+  if (/^(next|skip|next (song|track|one)|skip (this|it|song|track|this song|this track))$/.test(t)) return { action: 'next' };
+  if (/^(previous|go back|last (song|track)|previous (song|track)|play (the )?previous (song|track))$/.test(t)) return { action: 'previous' };
+  const seek = t.match(/^(go |skip |jump |fast )?(back|backwards|rewind|forward|forwards|ahead)( by)? (\d+|[a-z]+( five)?) ?(seconds?|secs?|minutes?|mins?)?$/);
+  if (seek) {
+    const n = Number(seek[4]) || NUMS[seek[4]] || 0;
+    const unit = /^min/.test(seek[6] || '') ? 60000 : 1000;
+    const dir = /back|rewind/.test(seek[2]) ? -1 : 1;
+    if (n) return { action: 'seek', ms: dir * n * unit };
+  }
+  if (/^(like|love)( (this|it|this song|the song))?$|^add (this|it) to (my )?liked songs$/.test(t)) return { action: 'like' };
+  if (/^(bookmark|mark)( (this|it|that|this bit|this moment))?$/.test(t)) return { action: 'bookmark' };
+  if (/^(add|save) (this|it|this song)( to (my )?playlist)?$/.test(t)) return { action: 'save' };
+  if (/^(open |start )?car mode$/.test(t)) return { action: 'car' };
+  if (/^(show |open )?(the )?queue$|^whats next$|^what is next$/.test(t)) return { action: 'queue' };
+  let m = t.match(/^(play )?(the )?(next|latest|newest) episode of (.+)$/);
+  if (m) return { action: 'episode', arg: m[4], mode: m[3] === 'next' ? 'order' : 'latest' };
+  m = t.match(/^(play|put on|start|listen to) (.+)$/);
+  if (m) return { action: 'play', arg: m[2] };
+  m = t.match(/^(search( for)?|find|look for|show me) (.+)$/);
+  if (m) return { action: 'search', arg: m[3] };
+  return { action: 'search', arg: t };
+}
+async function runCommand(text) {
+  const c = parseCommand(text);
+  try {
+    switch (c.action) {
+      case 'none': toast('Did not catch that. Try again.'); return;
+      case 'pause': if (localActive() && localId) player.pause(); else playerCmd('/me/player/pause', 'PUT'); toast('Paused'); return;
+      case 'resume': if (localActive() && localId) player.resume(); else togglePlayback(); return;
+      case 'next': skipNext(); toast('Skipped'); return;
+      case 'previous': if (localActive() && localId) player.previousTrack(); else playerCmd('/me/player/previous', 'POST'); return;
+      case 'seek': seekBy(c.ms); toast((c.ms < 0 ? 'Back ' : 'Forward ') + fmtClock(Math.abs(c.ms))); return;
+      case 'like': if (state.likeUri && !state.liked1) toggleLike(); else toast(state.liked1 ? 'Already in Liked Songs' : 'Play a song first'); return;
+      case 'bookmark': return quickMark();
+      case 'save': return saveToPlaylist(false);
+      case 'car': return openCar();
+      case 'queue': return openQueue();
+      case 'episode': return voiceEpisode(c.arg, c.mode);
+      case 'play': return voicePlay(c.arg);
+      default: return voiceSearch(c.arg);
+    }
+  } catch (e) { toast(friendly(e)); }
+}
+function voiceSearch(q) { $('q').value = q; onSearchInput(q); clearTimeout(searchTimer); if (q.trim().length >= 2) runSearch(q.trim()); }
+function quickMark() {
+  const it = state.player && state.player.item; if (!it) { toast('Nothing is playing to bookmark.'); return; }
+  const at = Math.round(posNow());
+  const marks = S.get('marks', []);
+  marks.unshift({ id: randomString(8), uri: it.uri, name: it.name, by: it.type === 'episode' ? (it.show && it.show.name) || '' : artistNames(it.artists), ms: at, note: '', at: Date.now(), type: it.type });
+  S.set('marks', marks.slice(0, 500)); toast('Bookmarked at ' + fmtClock(at));
+}
+function voiceEpisode(name, mode) {
+  const s = best(state.shows || [], name, x => x.show.name);
+  if (!s) { toast('No followed podcast called "' + name + '". Searching instead.'); voiceSearch(name); return; }
+  const pick = pickNext(s.eps, mode); if (!pick) return;
+  const rp = pick.ep.resume_point || {};
+  play({ uris: [pick.ep.uri], position_ms: pick.status === 'resume' ? rp.resume_position_ms : 0 }, s.show.name + ': ' + pick.ep.name, null, pick.ep.url);
+}
+async function voicePlay(q) {
+  let kind = null;
+  const k1 = q.match(/^(?:my |the )?(.+?) (playlist|album|podcast|audiobook)$/);
+  const k2 = !k1 && q.match(/^(?:the |my )?(playlist|album|podcast|audiobook) (.+)$/);
+  if (k1) { q = k1[1]; kind = k1[2]; } else if (k2) { kind = k2[1]; q = k2[2]; }
+  q = q.replace(/^my /, '');
+  if (/^(my )?liked songs$/.test(q)) { if (!state.liked) state.liked = S.get('likedCache');
+    if (state.liked && state.liked.tracks.length) { play({ uris: state.liked.tracks.slice(0, 100).map(t => t.uri) }, 'Liked songs'); return; } }
+  // 1. your own things first
+  if (!kind || kind === 'playlist') { const p = best(visibleLists(), q, x => x.name, kind ? 0.4 : 0.6); if (p) { play({ context_uri: p.uri }, p.name, null, p.url); return; } }
+  if (!kind || kind === 'podcast') { const s = best(state.shows || [], q, x => x.show.name, kind ? 0.4 : 0.6);
+    if (s) { const pick = pickNext(s.eps, S.get('mode:' + s.show.id, 'order')); if (pick) { const rp = pick.ep.resume_point || {};
+      play({ uris: [pick.ep.uri], position_ms: pick.status === 'resume' ? rp.resume_position_ms : 0 }, s.show.name + ': ' + pick.ep.name, null, pick.ep.url); return; } } }
+  if (!kind || kind === 'audiobook') { const books = state.lib.books || [];
+    const b = best(books, q, x => x.name, 0.5); if (b) { play({ context_uri: b.uri }, b.name); return; } }
+  // 2. Spotify search, "song by artist" aware
+  const by = q.match(/^(.+) by (.+)$/);
+  const types = kind === 'playlist' ? 'playlist' : kind === 'album' ? 'album' : kind === 'podcast' ? 'show' : kind === 'audiobook' ? 'audiobook' : 'track,artist,album,playlist';
+  const r = await api('/search?q=' + enc(by ? 'track:' + by[1] + ' artist:' + by[2] : q) + '&type=' + (by ? 'track' : types) + '&limit=5');
+  const cands = [];
+  const add = (arr, kindName, nameFn, bonus) => ((arr && arr.items) || []).filter(Boolean).forEach((x, i) => cands.push({ x, kind: kindName, score: matchScore(by ? by[1] : q, nameFn(x)) + bonus - i * 0.02 }));
+  add(r.artists, 'artist', x => x.name, 0.05);
+  add(r.tracks, 'track', x => x.name, by ? 0.1 : 0.02);
+  add(r.albums, 'album', x => x.name, 0);
+  add(r.playlists, 'playlist', x => x.name, -0.02);
+  add(r.shows, 'show', x => x.name, 0);
+  add(r.audiobooks, 'audiobook', x => x.name, 0);
+  cands.sort((a, b) => b.score - a.score);
+  const top = cands[0];
+  if (!top) { toast('Nothing found for "' + q + '".'); voiceSearch(q); return; }
+  const x = top.x, url = x.external_urls && x.external_urls.spotify;
+  if (top.kind === 'track') play({ uris: [x.uri] }, x.name + ' · ' + artistNames(x.artists), null, url);
+  else if (top.kind === 'show') playNewestOf(x);
+  else play({ context_uri: x.uri }, x.name, null, url);
+}
+let recog = null, recogTimer = null;
+function voiceFallback(msg) {
+  stopVoiceUi();
+  const q = $('q'); q.focus();
+  toast(msg || 'Voice did not start here. Tap the microphone on the keyboard to dictate instead.', 6000);
+}
+function stopVoiceUi() {
+  clearTimeout(recogTimer); recogTimer = null;
+  $('qmic').setAttribute('aria-pressed', 'false');
+  $('q').placeholder = 'Search songs, artists, podcasts, playlists';
+}
+function startVoice() {
+  primeLocal(); // keep the tap's permission to start audio for whatever the command plays
+  if (recog) { try { recog.abort(); } catch {} recog = null; stopVoiceUi(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { voiceFallback('This browser has no built-in voice recognition. Tap the microphone on the keyboard to dictate instead.'); return; }
+  const r = new SR(); // a fresh recogniser each time avoids a known iOS hang
+  recog = r;
+  r.lang = 'en-GB'; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+  let finalText = '', heard = false;
+  r.onresult = e => {
+    heard = true;
+    let txt = ''; for (let i = 0; i < e.results.length; i++) { txt += e.results[i][0].transcript; if (e.results[i].isFinal) finalText = txt; }
+    $('q').value = txt;
+    clearTimeout(recogTimer); recogTimer = setTimeout(() => { try { r.stop(); } catch {} }, 2500);
+  };
+  r.onerror = e => {
+    recog = null;
+    if (e.error === 'no-speech') { stopVoiceUi(); toast('Did not hear anything. Tap the mic and try again.'); return; }
+    if (e.error === 'aborted') { stopVoiceUi(); return; }
+    voiceFallback(e.error === 'not-allowed' || e.error === 'service-not-allowed'
+      ? 'Microphone or speech recognition is blocked. Allow it in Settings, or tap the microphone on the keyboard to dictate.' : null);
+  };
+  r.onend = () => {
+    const was = recog === r; recog = null; stopVoiceUi();
+    const text = (finalText || $('q').value || '').trim();
+    if (!was) return;
+    if (text) { $('q').value = ''; $('qclear').hidden = true; toast('Heard: "' + text + '"', 2500); runCommand(text); }
+    else if (!heard) toast('Did not hear anything. Tap the mic and try again.');
+  };
+  try { r.start(); } catch { recog = null; voiceFallback(); return; }
+  $('qmic').setAttribute('aria-pressed', 'true');
+  $('q').value = ''; $('q').placeholder = 'Listening… say "play", "pause", "next episode of…"';
+  // watchdog: iOS can freeze recognition without firing any event
+  recogTimer = setTimeout(() => { if (recog === r && !heard) { try { r.abort(); } catch {} recog = null; voiceFallback('Voice recognition stopped responding. Tap the microphone on the keyboard to dictate instead.'); } }, 7000);
+}
+
 /* ---------- screens ---------- */
 function errorBox(e) {
   const msg = e.status === 403 && !/scope/i.test(e.message || '') ? 'Spotify refused access. If you created the app recently, add your Spotify email under User Management in the developer dashboard.' : friendly(e);
@@ -1618,6 +1787,7 @@ async function boot() {
   for (const b of document.querySelectorAll('.tab')) b.addEventListener('click', () => switchTab(b.dataset.tab));
   $('q').addEventListener('input', e => onSearchInput(e.target.value));
   $('q').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(searchTimer); if (state.q.trim().length >= 2) runSearch(state.q.trim()); e.target.blur(); } });
+  $('qmic').addEventListener('click', startVoice);
   $('qclear').addEventListener('click', () => { $('q').value = ''; onSearchInput(''); $('q').focus(); });
   $('deviceBtn').addEventListener('click', () => { pendingPlay = null; openDevices(); });
   $('devRefresh').addEventListener('click', openDevices);
