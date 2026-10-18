@@ -166,6 +166,9 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
 .carmic[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .carheard { min-height: 1.4em; font-size: clamp(18px, 3.5vw, 26px); color: var(--ink); font-style: italic; }
 .carstatus { text-align: center; color: var(--muted); font-size: 13px; padding-top: 10px; }
+.q5 { padding-block: 10px 4px; }
+.q5 h4 { margin: 0 0 8px; font: 600 15px/1.3 var(--body); }
+.q5 h4 small { color: var(--muted); font-weight: 500; }
 .toggle { display: flex; gap: 10px; align-items: center; font-size: 13.5px; padding-block: 8px 2px; }
 footer { padding-block: 30px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 footer .links { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
@@ -657,6 +660,7 @@ function ownLists() {
 function isOwn(p) { const m = S.get('me'); return !!m && (p.ownerId === m.id || p.collaborative); }
 function togglePin(uri) { state.pins.has(uri) ? state.pins.delete(uri) : state.pins.add(uri); S.set('pins', [...state.pins]); render(); }
 function renderLists(main) {
+  main.append(h('button', { class: 'primary', type: 'button', style: 'width:100%;margin-top:12px', onclick: openBuilder }, 'Build a playlist'));
   renderRoutines(main);
   main.append(h('div', { class: 'bar' },
     h('small', { text: state.listsLoading ? 'Fetching playlists…' : state.lists ? visibleLists().length + ' playlists' : '' }),
@@ -874,7 +878,8 @@ function artistRow(a, kicker) {
 function slimTrack(it) {
   const t = it && it.track; if (!t || !t.uri) return null;
   return { uri: t.uri, name: t.name, artistsText: artistNames(t.artists), artistId: t.artists && t.artists[0] && t.artists[0].id,
-    albumName: t.album && t.album.name, albumId: t.album && t.album.id, img: t.album && smallImg(t.album.images), added: (it.added_at || '').slice(0, 10), ms: t.duration_ms };
+    albumName: t.album && t.album.name, albumId: t.album && t.album.id, img: t.album && smallImg(t.album.images), added: (it.added_at || '').slice(0, 10), ms: t.duration_ms,
+    x: !!t.explicit, y: t.album && t.album.release_date ? Number(t.album.release_date.slice(0, 4)) : null };
 }
 async function loadLiked() {
   if (state.likedLoading) return;
@@ -1574,6 +1579,203 @@ function renderReleases(main) {
     sub: [subLine(h('span', { class: 'pill new', text: fmtDate(al.release_date) }), al.album_type === 'single' ? 'Single or EP' : 'Album', al.total_tracks ? al.total_tracks + ' tracks' : null)],
     onOpen: () => openAlbum(al), onPlay: () => play({ context_uri: al.uri }, al.name, null, al.url) }));
   main.append(l);
+}
+
+/* ---------- playlist builder (five questions, about one hour) ---------- */
+const BQ = {
+  purpose: [['run', 'Run'], ['focus', 'Focus'], ['drive', 'Drive'], ['dinner', 'Dinner'], ['party', 'Party'], ['wind', 'Wind down']],
+  fam: [['mine', 'My songs'], ['mix', 'A mix'], ['new', 'Mostly new']],
+  eras: [['any', 'Any'], ['6070', '60s–70s'], ['80', '80s'], ['90', '90s'], ['00', '2000s'], ['10', '2010s'], ['now', 'Now']],
+  sounds: [['pop', 'Pop'], ['rock', 'Rock & indie'], ['hiphop', 'Hip-hop & R&B'], ['dance', 'Dance & electronic'], ['soul', 'Soul, funk & jazz'], ['folk', 'Folk & acoustic'], ['surprise', 'Surprise me']],
+  lyrics: [['any', 'Anything goes'], ['clean', 'Keep it clean'], ['instr', 'Mostly instrumental']]
+};
+const ERA_RANGE = { '6070': [1960, 1979], '80': [1980, 1989], '90': [1990, 1999], '00': [2000, 2009], '10': [2010, 2019], now: [2020, new Date().getFullYear()] };
+const PURPOSE_GENRES = { run: ['dance', 'pop', 'drum and bass', 'house', 'edm', 'hip hop'], focus: ['ambient', 'lo-fi', 'classical', 'chill', 'piano', 'instrumental'],
+  drive: ['rock', 'indie', 'pop', 'synthpop', 'classic rock', 'new wave'], dinner: ['jazz', 'soul', 'bossa nova', 'acoustic', 'r&b'],
+  party: ['dance', 'pop', 'hip hop', 'house', 'disco', 'funk'], wind: ['chill', 'acoustic', 'ambient', 'folk', 'soul'] };
+const SOUND_GENRES = { pop: ['pop', 'synthpop', 'indie pop', 'dance pop'], rock: ['rock', 'indie', 'alternative', 'britpop', 'indie rock'], hiphop: ['hip hop', 'rap', 'r&b', 'uk hip hop'],
+  dance: ['house', 'dance', 'electronic', 'techno', 'drum and bass'], soul: ['soul', 'funk', 'jazz', 'disco', 'neo soul'], folk: ['folk', 'acoustic', 'singer-songwriter', 'indie folk'] };
+const INSTR_GENRES = ['lo-fi', 'ambient', 'jazz', 'classical', 'soundtrack', 'post-rock', 'piano'];
+const TARGET_MS = 60 * 60000;
+function builderState() { return S.get('builderLast', { purpose: 'drive', fam: 'mix', eras: ['any'], sounds: ['surprise'], lyrics: 'any' }); }
+function openBuilder() { const st = builderState(); openSheet('Build a playlist', box => paintBuilder(box, st)); }
+function paintBuilder(box, st) {
+  const q = (n, title, hint, key, multi, max) => h('div', { class: 'q5' },
+    h('h4', {}, n + '. ' + title + ' ', hint ? h('small', { text: hint }) : null),
+    h('div', { class: 'chips', style: 'padding-top:0' }, ...BQ[key].map(([v, l]) => {
+      const on = multi ? st[key].includes(v) : st[key] === v;
+      return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(on), onclick: () => {
+        if (!multi) st[key] = v;
+        else {
+          const exclusive = v === 'any' || v === 'surprise';
+          let cur = st[key].filter(x => x !== 'any' && x !== 'surprise');
+          if (exclusive) cur = [v];
+          else if (cur.includes(v)) cur = cur.filter(x => x !== v);
+          else { if (max && cur.length >= max) { toast('Pick up to ' + max + '.'); return; } cur = cur.concat(v); }
+          st[key] = cur.length ? cur : [key === 'eras' ? 'any' : 'surprise'];
+        }
+        box.replaceChildren(); paintBuilder(box, st);
+      } }, l);
+    })));
+  box.append(
+    h('div', { class: 'hint', text: 'Tap your answers. It builds about an hour, previews it, then saves it to Spotify.' }),
+    q(1, 'What is it for?', null, 'purpose'),
+    q(2, 'Familiar or new?', null, 'fam'),
+    q(3, 'Which era?', 'pick any', 'eras', true),
+    q(4, 'Pick your sound', 'up to three', 'sounds', true, 3),
+    q(5, 'Lyrics?', null, 'lyrics'),
+    h('div', { style: 'padding-top:16px' }, h('button', { class: 'primary', type: 'button', style: 'width:100%', onclick: () => { S.set('builderLast', st); buildPlaylist(box, st); } }, 'Build my hour')));
+}
+function targetGenres(st) {
+  let g = [];
+  const sounds = st.sounds.filter(x => x !== 'surprise');
+  if (st.lyrics === 'instr') g = INSTR_GENRES.slice();
+  else if (sounds.length) { for (const k of sounds) g.push(...SOUND_GENRES[k]); g.push(...PURPOSE_GENRES[st.purpose].slice(0, 2)); }
+  else g = PURPOSE_GENRES[st.purpose].slice();
+  return [...new Set(g)];
+}
+function eraOk(st, year) {
+  if (st.eras.includes('any')) return true;
+  if (!year) return false;
+  return st.eras.some(e => year >= ERA_RANGE[e][0] && year <= ERA_RANGE[e][1]);
+}
+async function artistGenres(ids, onStep) {
+  const cache = S.get('agenre', {});
+  const need = [...new Set(ids)].filter(id => id && !cache[id]).slice(0, 60);
+  let n = 0;
+  await pool(need, 3, async id => { try { const a = await api('/artists/' + id); cache[id] = (a && a.genres) || []; } catch { cache[id] = []; } n++; if (onStep) onStep(n, need.length); });
+  S.set('agenre', cache);
+  return cache;
+}
+function fromTrack(t, src) {
+  return t && t.uri && { uri: t.uri, name: t.name, artistsText: artistNames(t.artists), artistId: t.artists && t.artists[0] && t.artists[0].id,
+    ms: t.duration_ms, x: !!t.explicit, y: t.album && t.album.release_date ? Number(t.album.release_date.slice(0, 4)) : null,
+    img: t.album && smallImg(t.album.images), albumId: t.album && t.album.id, src };
+}
+async function buildPlaylist(box, st) {
+  const status = h('div', { class: 'empty', text: 'Gathering songs…' });
+  box.replaceChildren(status);
+  const say = t => { status.textContent = t; };
+  try {
+    const genres = targetGenres(st);
+    const match = gs => (gs || []).some(g => genres.some(t => g.includes(t)));
+    // familiar pool: liked songs on this device plus your top songs
+    let fam = [];
+    if (st.fam !== 'new') {
+      say('Looking at your own songs…');
+      if (!state.liked) state.liked = S.get('likedCache');
+      if (state.liked) fam = state.liked.tracks.filter(t => t.x !== undefined).map(t => ({ ...t, src: 'fam' }));
+      const tops = await Promise.all(['short_term', 'medium_term', 'long_term'].map(r => api('/me/top/tracks?limit=50&time_range=' + r).catch(() => ({ items: [] }))));
+      for (const r of tops) for (const t of (r.items || [])) { const c = fromTrack(t, 'fam'); if (c) fam.push(c); }
+      const seen = new Set(); fam = fam.filter(t => !seen.has(t.uri) && seen.add(t.uri));
+      fam = fam.filter(t => eraOk(st, t.y) && (st.lyrics !== 'clean' || t.x === false));
+      const counts = {}; fam.forEach(t => { counts[t.artistId] = (counts[t.artistId] || 0) + 1; });
+      const ids = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+      const ag = await artistGenres(ids, (n, total) => say('Checking the style of your artists… ' + n + ' of ' + total));
+      // songs whose artist matches the chosen sound come first; others only fill gaps
+      fam.forEach(t => { t.fit = match(ag[t.artistId]); });
+      if (fam.filter(t => t.fit).length >= 8) fam = fam.filter(t => t.fit);
+    }
+    // new pool: Spotify search by genre and year
+    let fresh = [];
+    if (st.fam !== 'mine') {
+      const known = new Set(fam.map(t => t.uri));
+      if (st.fam === 'new' && state.liked) state.liked.tracks.forEach(t => known.add(t.uri));
+      const ranges = st.eras.includes('any') ? [null] : st.eras.map(e => ERA_RANGE[e].join('-'));
+      const queries = [];
+      const gs = genres.slice().sort(() => Math.random() - 0.5).slice(0, 7);
+      for (const g of gs) for (const r of ranges) queries.push('genre:"' + g + '"' + (r ? ' year:' + r : ''));
+      const qs = queries.slice(0, 16);
+      let n = 0;
+      const res = await pool(qs, 3, async q => {
+        const off = Math.floor(Math.random() * 8) * 10;
+        const r = await api('/search?q=' + enc(q) + '&type=track&limit=10&offset=' + off);
+        n++; say('Finding new songs… ' + n + ' of ' + qs.length);
+        return ((r.tracks && r.tracks.items) || []).filter(Boolean);
+      });
+      for (const items of res) if (Array.isArray(items)) for (const t of items) {
+        const c = fromTrack(t, 'new');
+        if (c && !known.has(c.uri) && (st.lyrics !== 'clean' || !c.x) && eraOk(st, c.y)) { known.add(c.uri); fresh.push(c); }
+      }
+    }
+    const ctx = { st, fam, fresh, chosen: [] };
+    pickHour(ctx);
+    if (!ctx.chosen.length) {
+      box.replaceChildren(h('div', { class: 'empty', text: 'Could not find songs for that mix. Try "Any" era, a different sound, or "A mix".' }),
+        h('button', { class: 'ghost', type: 'button', onclick: () => { box.replaceChildren(); paintBuilder(box, st); } }, 'Change answers'));
+      return;
+    }
+    paintPreview(box, ctx);
+  } catch (e) {
+    if (handleAuthError(e)) return;
+    box.replaceChildren(h('div', { class: 'err', text: friendly(e) }), h('button', { class: 'ghost', type: 'button', onclick: () => { box.replaceChildren(); paintBuilder(box, st); } }, 'Back'));
+  }
+}
+function shuffled(a) { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; }
+/* Picks songs to land close to an hour, no artist more than twice, honouring the familiar/new split. */
+function pickHour(ctx) {
+  const share = { mine: 1, mix: 0.5, new: 0.15 }[ctx.st.fam];
+  const used = new Set(), perArtist = {}, out = []; let total = 0;
+  const ok = t => t && t.ms && !used.has(t.uri) && (perArtist[t.artistId] || 0) < 2 && !(ctx.removed && ctx.removed.has(t.uri));
+  const take = t => { used.add(t.uri); perArtist[t.artistId] = (perArtist[t.artistId] || 0) + 1; out.push(t); total += t.ms; };
+  const famP = shuffled(ctx.fam.filter(t => t.fit !== false)).concat(shuffled(ctx.fam.filter(t => t.fit === false))), newP = shuffled(ctx.fresh);
+  for (const t of famP) { if (total >= TARGET_MS * share) break; if (ok(t) && total + t.ms <= TARGET_MS + 90000) take(t); }
+  for (const t of newP) { if (total >= TARGET_MS - 60000) break; if (ok(t) && total + t.ms <= TARGET_MS + 90000) take(t); }
+  for (const t of famP.concat(newP)) { if (total >= TARGET_MS - 60000) break; if (ok(t) && total + t.ms <= TARGET_MS + 90000) take(t); }
+  ctx.chosen = spreadShuffle(out, t => t.artistId || t.uri);
+  ctx.spare = famP.concat(newP).filter(t => !used.has(t.uri));
+}
+function totalMs(list) { return list.reduce((a, t) => a + (t.ms || 0), 0); }
+function playlistTitle(st) {
+  const label = (key, v) => (BQ[key].find(x => x[0] === v) || [, v])[1];
+  const bits = [label('purpose', st.purpose)];
+  if (!st.eras.includes('any')) bits.push(st.eras.map(e => label('eras', e)).join(' + '));
+  const sounds = st.sounds.filter(x => x !== 'surprise');
+  if (st.lyrics === 'instr') bits.push('Instrumental'); else if (sounds.length) bits.push(sounds.map(x => label('sounds', x)).join(' + '));
+  return bits.join(' · ');
+}
+function paintPreview(box, ctx) {
+  const list = ctx.chosen, mins = Math.round(totalMs(list) / 60000);
+  const famN = list.filter(t => t.src === 'fam').length;
+  box.replaceChildren(
+    h('div', { class: 'bar' }, h('small', { text: list.length + ' songs · ' + mins + ' min · ' + famN + ' yours, ' + (list.length - famN) + ' new' }),
+      h('span', { class: 'actions', style: 'gap:6px' },
+        h('button', { class: 'ghost', type: 'button', onclick: () => { box.replaceChildren(); paintBuilder(box, ctx.st); } }, 'Answers'),
+        h('button', { class: 'ghost', type: 'button', onclick: () => { pickHour(ctx); paintPreview(box, ctx); } }, 'Reshuffle'))),
+    h('div', { class: 'field', style: 'margin-top:8px' }, h('label', { for: 'bpName', text: 'Playlist name' }),
+      h('input', { id: 'bpName', value: playlistTitle(ctx.st), maxlength: '80' })),
+    h('div', { class: 'actions', style: 'gap:8px;flex-wrap:wrap' },
+      h('button', { class: 'primary', type: 'button', onclick: e => savePlaylist(ctx, e.currentTarget, false) }, 'Save to Spotify'),
+      h('button', { class: 'ghost', type: 'button', onclick: e => { primeLocal(); savePlaylist(ctx, e.currentTarget, true); } }, 'Save and play')));
+  const l = h('div', { class: 'list' });
+  list.forEach((t, i) => l.append(row({ img: t.img, kicker: t.src === 'fam' ? 'Yours' : 'New to you', title: t.name,
+    sub: [subLine(t.artistsText, t.y ? String(t.y) : null, fmtClock(t.ms), t.x ? 'Explicit' : null)],
+    extra: [h('button', { class: 'icon', type: 'button', 'aria-label': 'Remove ' + t.name, html: ICON.close, onclick: () => {
+      ctx.removed = ctx.removed || new Set(); ctx.removed.add(t.uri);
+      list.splice(i, 1);
+      // top back up towards the hour with a spare that fits
+      const need = TARGET_MS - totalMs(list);
+      const counts = {}; list.forEach(x => { counts[x.artistId] = (counts[x.artistId] || 0) + 1; });
+      const spareIdx = (ctx.spare || []).findIndex(x => !ctx.removed.has(x.uri) && (counts[x.artistId] || 0) < 2 && x.ms <= need + 90000);
+      if (spareIdx !== -1 && need > 60000) list.splice(i, 0, ctx.spare.splice(spareIdx, 1)[0]);
+      paintPreview(box, ctx);
+    } })] })));
+  const short = mins < 50 ? h('div', { class: 'hint', text: 'Only ' + mins + ' minutes matched your answers. Try "A mix", "Any" era or another sound for a full hour.' }) : null;
+  box.append(l, short, h('div', { class: 'hint', text: 'Songs are matched by their artist\'s genres, so a few may not fit. Remove any that miss and a spare takes its place.' }));
+}
+async function savePlaylist(ctx, btn, andPlay) {
+  if (!hasScope('playlist-modify-private')) { toast('Reconnect Spotify (banner at the top) to allow saving playlists.', 5000); return; }
+  const name = ($('bpName').value || '').trim() || playlistTitle(ctx.st);
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const pl = await api('/me/playlists', { method: 'POST', body: { name, public: false, description: 'Built by Up Next on ' + new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + '.' } });
+    const uris = ctx.chosen.map(t => t.uri);
+    await api('/playlists/' + pl.id + '/items', { method: 'PUT', body: { uris: uris.slice(0, 100) } });
+    toast('Saved "' + name + '" to Spotify');
+    btn.textContent = 'Saved';
+    loadLists(true);
+    if (andPlay) { closeSheet(); play({ context_uri: pl.uri }, name, null, pl.external_urls && pl.external_urls.spotify); }
+  } catch (e) { btn.disabled = false; btn.textContent = andPlay ? 'Save and play' : 'Save to Spotify'; toast(friendly(e), 6000); }
 }
 
 /* ---------- voice commands ---------- */
