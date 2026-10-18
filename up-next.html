@@ -142,6 +142,36 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
   background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 10px; font-size: 14px; z-index: 9; max-width: calc(100vw - 32px); }
 .banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 14px; }
 .banner span { flex: 1 1 240px; min-width: 0; }
+.car { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) max(20px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 20px) max(20px, env(safe-area-inset-left, 0px)); }
+.car[hidden] { display: none; }
+.carhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.carhead h2 { font: 800 22px/1 var(--display); margin: 0; }
+.carmeta { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; text-align: center; min-height: 0; }
+.carmeta .t { font: 800 clamp(26px, 6vw, 52px)/1.1 var(--display); letter-spacing: -0.02em; text-wrap: balance; overflow-wrap: anywhere; }
+.carmeta .s { font-size: clamp(16px, 3vw, 22px); color: var(--muted); }
+.carmeta .p { font-size: 18px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.carbtns { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 14px; }
+.carbtns button, .carnext { border: 0; border-radius: 24px; background: var(--surface); color: var(--ink); font: 800 26px/1 var(--display); min-height: 120px; box-shadow: 0 0 0 1px var(--line); }
+.carbtns .big { background: var(--accent); color: var(--accent-ink); }
+.carbtns svg { width: 54px; height: 54px; fill: currentColor; }
+.carnext { margin-top: 14px; min-height: 84px; width: 100%; font-size: 22px; }
+.carstatus { text-align: center; color: var(--muted); font-size: 13px; padding-top: 10px; }
+.heat { display: grid; grid-template-columns: 30px repeat(24, minmax(0, 1fr)); gap: 2px; margin-top: 10px; }
+.heat .lab { font-size: 10.5px; color: var(--muted); line-height: 1; align-self: center; }
+.heat .hr { font-size: 10px; color: var(--muted); grid-row: 8; }
+.heat .c { aspect-ratio: 1; border-radius: 3px; border: 0; padding: 0; min-width: 0; }
+.heat .c, .legend .c { background: var(--line); }
+.c.l1 { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
+.c.l2 { background: color-mix(in srgb, var(--accent) 55%, var(--surface)); }
+.c.l3 { background: color-mix(in srgb, var(--accent) 78%, var(--surface)); }
+.c.l4 { background: var(--accent); }
+.legend { display: flex; align-items: center; gap: 4px; justify-content: flex-end; font-size: 11px; color: var(--muted); padding-top: 6px; }
+.legend .c { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; padding-block: 12px 4px; }
+.stats div { font-size: 13px; color: var(--muted); }
+.stats b { display: block; color: var(--ink); font-size: 15px; }
+.toggle { display: flex; gap: 10px; align-items: center; font-size: 13.5px; padding-block: 8px 2px; }
 footer { padding-block: 30px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 footer .links { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
 footer small { color: var(--muted); text-align: center; }
@@ -181,9 +211,11 @@ footer small { color: var(--muted); text-align: center; }
     <div class="nowctl">
       <button class="icon txt" id="nowBack" type="button" aria-label="Back 15 seconds"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>15</button>
       <button class="icon" id="nowLike" type="button" aria-label="Like" aria-pressed="false"></button>
+      <button class="icon" id="nowMark" type="button" aria-label="Bookmark this moment"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4zm2 2v12.3l4-2.7 4 2.7V5z"/></svg></button>
       <button class="icon txt" id="nowSave" type="button" aria-label="Add to your saving playlist"><svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14-1v-3h2v3h3v2h-3v3h-2v-3h-3v-2z"/></svg><span id="nowSaveName">Add</span></button>
       <button class="icon txt" id="nowFwd" type="button" aria-label="Forward 30 seconds">30<svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/></svg></button>
       <button class="icon" id="nowQueue" type="button" aria-label="Show the queue"><svg viewBox="0 0 24 24"><path d="M3 5h14v2H3zm0 4h14v2H3zm0 4h9v2H3zm12 0v6l5-3z"/></svg></button>
+      <button class="icon" id="nowCar" type="button" aria-label="Car mode"><svg viewBox="0 0 24 24"><path d="M5 11l1.5-4.5h11L19 11zm12.5 5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm-11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM18.9 6c-.2-.6-.8-1-1.4-1h-11c-.7 0-1.2.4-1.4 1L3 12v8a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-8z"/></svg></button>
       <button class="icon" id="nowNext" type="button" aria-label="Skip"><svg viewBox="0 0 24 24"><path d="M6 6l8.5 6L6 18V6zm10 0h2v12h-2z"/></svg></button>
     </div>
   </div>
@@ -236,6 +268,26 @@ footer small { color: var(--muted); text-align: center; }
     </span>
   </div>
 </dialog>
+<div class="car" id="car" hidden role="dialog" aria-label="Car mode">
+  <div class="carhead"><h2>Car mode</h2><button class="ghost" id="carClose" type="button">Close</button></div>
+  <div class="carmeta"><div class="s" id="carS"></div><div class="t" id="carT">Nothing playing</div><div class="p" id="carP"></div></div>
+  <div class="carbtns">
+    <button id="carBack" type="button" aria-label="Back 30 seconds">−30</button>
+    <button id="carToggle" class="big" type="button" aria-label="Play or pause"></button>
+    <button id="carFwd" type="button" aria-label="Forward 30 seconds">+30</button>
+  </div>
+  <button class="carnext" id="carNext" type="button">Next</button>
+  <div class="carstatus" id="carStatus"></div>
+</div>
+<dialog id="markDialog">
+  <h3>Bookmark</h3>
+  <p id="markWhat"></p>
+  <div class="field"><label for="markNote">Note (optional)</label><input id="markNote" maxlength="120" placeholder="e.g. great point about pacing"></div>
+  <div class="actions" style="justify-content:flex-end;gap:6px">
+    <button class="ghost" id="markCancel" type="button">Cancel</button>
+    <button class="ghost" id="markSave" type="button">Save bookmark</button>
+  </div>
+</dialog>
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -250,7 +302,7 @@ const API = 'https://api.spotify.com/v1';
 const AUTH = 'https://accounts.spotify.com';
 const SCOPE_LIST = ['user-library-read', 'user-library-modify', 'user-read-playback-position', 'playlist-read-private', 'playlist-read-collaborative',
   'playlist-modify-private', 'playlist-modify-public', 'user-read-playback-state', 'user-modify-playback-state', 'user-read-recently-played',
-  'user-top-read', 'streaming', 'user-read-email', 'user-read-private'];
+  'user-top-read', 'user-follow-read', 'streaming', 'user-read-email', 'user-read-private'];
 const SCOPES = SCOPE_LIST.join(' ');
 const REDIRECT = location.origin + location.pathname;
 const FRESH_MS = 10 * 60 * 1000;
@@ -526,6 +578,9 @@ function renderPods(main) {
   if (!state.shows.length) { main.append(h('div', { class: 'empty', text: 'No followed podcasts yet. Follow a show in Spotify and tap Refresh.' })); return; }
   const list = h('div', { class: 'list' });
   if (state.podView === 'new') {
+    main.append(h('label', { class: 'toggle' }, h('input', { type: 'checkbox', id: 'autoNext', checked: S.get('autoNext') ? true : null,
+      onchange: e => { S.set('autoNext', e.target.checked); toast(e.target.checked ? 'When an episode starts, the next new one gets queued after it.' : 'Auto-play off', 4500); if (e.target.checked && state.player && state.player.item) maybeQueueInbox(state.player.item, true); } }),
+      'Auto-play the next new episode instead of Spotify\'s picks'));
     if (!inbox.length) { main.append(h('div', { class: 'empty', text: 'Nothing new since ' + fmtDate(inboxSince()) + '. New episodes from shows you follow land here.' })); return; }
     for (const { s, e } of inbox) list.append(episodeRow(e, s.show.name, s.show.images, [
       h('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss ' + e.name, html: ICON.close, onclick: () => dismiss(e.id) })]));
@@ -736,12 +791,14 @@ async function runRoutine(r) {
 }
 
 /* ---------- library ---------- */
-const LIB_VIEWS = [['liked', 'Liked songs'], ['episodes', 'Saved episodes'], ['books', 'Audiobooks'], ['top', 'Your top'], ['history', 'Recently played']];
+const LIB_VIEWS = [['liked', 'Liked songs'], ['releases', 'New releases'], ['episodes', 'Saved episodes'], ['books', 'Audiobooks'], ['marks', 'Bookmarks'], ['top', 'Your top'], ['history', 'History']];
 function renderLib(main) {
   main.append(h('div', { class: 'chips' }, ...LIB_VIEWS.map(([k, label]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(state.libView === k),
     onclick: () => { state.libView = k; S.set('libView', k); render(); loadLibView(); } }, label))));
   const v = state.libView;
   if (v === 'liked') return renderLiked(main);
+  if (v === 'marks') return renderMarks(main);
+  if (v === 'releases') return renderReleases(main);
   const key = v === 'top' ? 'top:' + state.topRange : v;
   if (v === 'top') main.append(h('div', { class: 'chips' }, ...[['short_term', 'Last 4 weeks'], ['medium_term', 'Last 6 months'], ['long_term', 'All time']]
     .map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(state.topRange === k), onclick: () => { state.topRange = k; render(); loadLibView(); } }, l))));
@@ -769,6 +826,8 @@ function renderLib(main) {
     main.append(al);
     return;
   } else if (v === 'history') {
+    renderHeatmap(main);
+    main.append(h('div', { class: 'section', text: 'Recently played songs' }));
     if (!data.length) list.append(h('div', { class: 'empty', text: 'Nothing played recently.' }));
     data.forEach(it => list.append(trackRow(it.track, () => play({ uris: [it.track.uri] }, it.track.name), timeAgo(it.played_at))));
     main.append(list, h('div', { class: 'hint', text: 'Spotify only shares your last 50 songs here, and no podcast episodes.' }));
@@ -783,7 +842,8 @@ function timeAgo(iso) {
 }
 async function loadLibView(force = false) {
   const v = state.libView;
-  if (v === 'liked') return;
+  if (v === 'liked' || v === 'marks') return;
+  if (v === 'releases') return loadReleases(force);
   const key = v === 'top' ? 'top:' + state.topRange : v;
   if (state.lib[key] && !force) return;
   if (state.libLoading[key]) return;
@@ -791,7 +851,7 @@ async function loadLibView(force = false) {
   try {
     if (v === 'episodes') state.lib[key] = (await getAll('/me/episodes?limit=50', 200)).map(it => it && it.episode).filter(Boolean);
     else if (v === 'books') state.lib[key] = (await getAll('/me/audiobooks?limit=50', 200)).map(it => it && (it.audiobook || it)).filter(Boolean);
-    else if (v === 'history') state.lib[key] = ((await api('/me/player/recently-played?limit=50')).items || []).filter(it => it && it.track);
+    else if (v === 'history') { state.lib[key] = ((await api('/me/player/recently-played?limit=50')).items || []).filter(it => it && it.track); histMerge(state.lib[key]); }
     else if (v === 'top') {
       const [t, a] = await Promise.all([api('/me/top/tracks?limit=30&time_range=' + state.topRange), api('/me/top/artists?limit=20&time_range=' + state.topRange)]);
       state.lib[key] = { tracks: (t.items || []).filter(Boolean), artists: (a.items || []).filter(Boolean) };
@@ -1061,7 +1121,7 @@ function waitReady() {
 function ensureLocal() { // call synchronously from a tap, before any await
   if (!sdkLoaded || !window.Spotify) return Promise.reject(new Error('The built-in player is still loading. Try again in a moment.'));
   if (!player) {
-    const p = new window.Spotify.Player({ name: LOCAL_NAME, volume: 0.9,
+    const p = new window.Spotify.Player({ name: LOCAL_NAME, volume: 0.9, enableMediaSession: true,
       getOAuthToken: cb => { accessToken().then(cb, () => cb('')); } });
     player = p;
     p.addListener('ready', ({ device_id }) => { localId = device_id; if (readyWaiter) readyWaiter.resolve(device_id); });
@@ -1233,7 +1293,7 @@ async function refreshPlayer() {
 function paintPlayer() {
   const p = state.player, now = $('now');
   $('deviceName').textContent = p && p.device && p.device.name ? (isLocalDevice(p.device) ? LOCAL_LABEL : p.device.name) : (localWanted() ? LOCAL_LABEL : 'choose device');
-  if (!p || !p.item) { now.hidden = true; return; }
+  if (!p || !p.item) { now.hidden = true; paintCar(); return; }
   now.hidden = false;
   const it = p.item, isEp = it.type === 'episode';
   $('nowT').textContent = it.name;
@@ -1242,6 +1302,9 @@ function paintPlayer() {
   $('nowLike').hidden = isEp; $('nowSave').hidden = isEp;
   const sp = S.get('savePl'); $('nowSaveName').textContent = sp ? sp.name : 'Add';
   $('nowSave').setAttribute('aria-label', sp ? 'Add this song to ' + sp.name : 'Choose a playlist to save songs to');
+  $('nowMark').hidden = !isEp;
+  if (it.uri && p.is_playing && it.uri !== state.lastItemUri) { state.lastItemUri = it.uri; onItemChange(it); }
+  paintCar();
   if (!isEp && it.uri && it.uri !== state.likeUri) {
     state.likeUri = it.uri; state.liked1 = null; paintLike();
     if (hasScope('user-library-read')) api('/me/library/contains?uris=' + enc(it.uri)).then(a => { if (state.likeUri === it.uri) { state.liked1 = !!(a && a[0]); paintLike(); } }).catch(() => {});
@@ -1311,6 +1374,195 @@ async function playerCmd(path, method) {
   try { await api(path, { method }); setTimeout(refreshPlayer, 600); } catch (e) { if (!handleAuthError(e)) toast(friendly(e)); }
 }
 
+/* ---------- transport helpers (player bar and car mode) ---------- */
+function togglePlayback() {
+  if (localActive() && localId) { try { player.activateElement(); } catch {} player.togglePlay(); return; }
+  if (localActive() && !localId) {
+    const it = state.player.item; if (!it) return;
+    const at = Math.round(posNow());
+    const body = it.type !== 'episode' && state.player.context ? { context_uri: state.player.context.uri, offset: { uri: it.uri }, position_ms: at } : { uris: [it.uri], position_ms: at };
+    play(body, it.name, 'local'); return;
+  }
+  playerCmd(state.player && state.player.is_playing ? '/me/player/pause' : '/me/player/play', 'PUT');
+}
+function skipNext() { if (localActive() && localId) { player.nextTrack(); return; } playerCmd('/me/player/next', 'POST'); }
+
+/* ---------- car mode ---------- */
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if (!('wakeLock' in navigator)) throw new Error('none');
+    wakeLock = await navigator.wakeLock.request('screen');
+    $('carStatus').textContent = 'The screen stays on while car mode is open.';
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch { $('carStatus').textContent = 'This browser would not keep the screen on, so it may lock as usual.'; }
+}
+function openCar() { $('car').hidden = false; document.body.style.overflow = 'hidden'; paintCar(); keepAwake(); }
+function closeCar() { $('car').hidden = true; document.body.style.overflow = ''; if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } }
+function paintCar() {
+  if ($('car').hidden) return;
+  const p = state.player, it = p && p.item;
+  $('carT').textContent = it ? it.name : 'Nothing playing';
+  $('carS').textContent = it ? (it.type === 'episode' ? (it.show && it.show.name) || 'Podcast' : artistNames(it.artists)) : 'Pick something from Up Next first';
+  $('carToggle').innerHTML = p && p.is_playing ? ICON.pause : ICON.play;
+  $('carToggle').setAttribute('aria-label', p && p.is_playing ? 'Pause' : 'Play');
+  paintCarPos();
+}
+function paintCarPos() { $('carP').textContent = pos.dur ? fmtClock(posNow()) + ' / ' + fmtClock(pos.dur) : ''; }
+
+/* ---------- bookmarks ---------- */
+function openMark() {
+  const it = state.player && state.player.item; if (!it) return;
+  const at = Math.round(posNow());
+  const by = it.type === 'episode' ? (it.show && it.show.name) || '' : artistNames(it.artists);
+  $('markWhat').textContent = it.name + (by ? ' · ' + by : '') + ' at ' + fmtClock(at);
+  $('markNote').value = '';
+  $('markSave').onclick = () => {
+    const marks = S.get('marks', []);
+    marks.unshift({ id: randomString(8), uri: it.uri, name: it.name, by, ms: at, note: $('markNote').value.trim(), at: Date.now(), type: it.type });
+    S.set('marks', marks.slice(0, 500)); $('markDialog').close(); toast('Bookmarked at ' + fmtClock(at));
+    if (state.tab === 'lib' && state.libView === 'marks') render();
+  };
+  $('markDialog').showModal();
+}
+function renderMarks(main) {
+  const marks = S.get('marks', []);
+  if (!marks.length) { main.append(h('div', { class: 'empty', text: 'No bookmarks yet. While an episode plays, tap the bookmark icon in the player to save that moment.' })); return; }
+  main.append(h('div', { class: 'bar' }, h('small', { text: marks.length + (marks.length === 1 ? ' bookmark' : ' bookmarks, newest first') })));
+  const l = h('div', { class: 'list' });
+  for (const m of marks) l.append(row({ kicker: m.by, title: m.note || m.name,
+    sub: [subLine(m.note ? m.name : null), subLine('At ' + fmtClock(m.ms), 'saved ' + new Date(m.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))],
+    extra: [h('button', { class: 'icon', type: 'button', 'aria-label': 'Delete bookmark', html: ICON.close, onclick: () => { S.set('marks', S.get('marks', []).filter(x => x.id !== m.id)); render(); } })],
+    playLabel: 'Play from bookmark ', onPlay: () => play({ uris: [m.uri], position_ms: m.ms }, m.name) }));
+  main.append(l, h('div', { class: 'hint', text: 'Bookmarks are kept on this device only.' }));
+}
+
+/* ---------- auto-play the next new episode ---------- */
+const autoQueued = new Set();
+function onItemChange(it) {
+  histAdd(it);
+  if (it.type === 'episode') maybeQueueInbox(it);
+}
+async function maybeQueueInbox(it, manual) {
+  if (!S.get('autoNext') || !it || it.type !== 'episode' || !state.shows) return;
+  const inbox = inboxItems();
+  const i = inbox.findIndex(x => x.e.uri === it.uri);
+  if (i !== -1) { const d = S.get('dismissed', []); if (!d.includes(inbox[i].e.id)) { d.push(inbox[i].e.id); S.set('dismissed', d.slice(-800)); } }
+  const rest = inbox.filter(x => x.e.uri !== it.uri && !autoQueued.has(x.e.uri));
+  const nextUp = i !== -1 ? (inbox.slice(i + 1).find(x => !autoQueued.has(x.e.uri)) || rest[0]) : rest[0];
+  if (state.tab === 'pods') render();
+  if (!nextUp) { if (manual) toast('No other new episodes to queue.'); return; }
+  const dev = currentDeviceId();
+  try {
+    await api('/me/player/queue?uri=' + enc(nextUp.e.uri) + (dev ? '&device_id=' + enc(dev) : ''), { method: 'POST' });
+    autoQueued.add(nextUp.e.uri);
+    toast('Up next: ' + nextUp.s.show.name + ' · ' + nextUp.e.name, 4500);
+  } catch (e) { if (manual) toast(friendly(e)); }
+}
+
+/* ---------- new releases from followed artists ---------- */
+const REL_FRESH = 20 * 3600 * 1000;
+async function loadReleases(force) {
+  const c = S.get('relCache');
+  if (c && !force && Date.now() - c.at < REL_FRESH) { state.rel = c; render(); return; }
+  if (c && !state.rel) state.rel = c;
+  if (state.relLoading) return;
+  if (!hasScope('user-follow-read')) { state.relErr = new Error('Reconnect Spotify (banner at the top) to see releases from artists you follow.'); render(); return; }
+  state.relLoading = true; state.relErr = null; state.relProgress = 'Finding artists you follow…'; render();
+  try {
+    let artists = [], next = '/me/following?type=artist&limit=50';
+    while (next && artists.length < 500) { const r = await api(next); const b = r && r.artists; artists = artists.concat(((b && b.items) || []).filter(Boolean)); next = b && b.next; }
+    const cutoff = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    let n = 0; const found = new Map();
+    await pool(artists, 3, async a => {
+      const r = await api('/artists/' + a.id + '/albums?include_groups=album,single&limit=10');
+      for (const al of (r.items || [])) {
+        const d = al && al.release_date ? (al.release_date.length === 7 ? al.release_date + '-01' : al.release_date) : '';
+        if (d.length === 10 && d >= cutoff && !found.has(al.id)) found.set(al.id, { ...al, images: al.images, sortDate: d });
+      }
+      n++; state.relProgress = 'Checked ' + n + ' of ' + artists.length + ' artists'; const el = $('relProgress'); if (el) el.textContent = state.relProgress;
+    });
+    const items = [...found.values()].sort((x, y) => y.sortDate.localeCompare(x.sortDate))
+      .map(al => ({ id: al.id, uri: al.uri, name: al.name, artists: (al.artists || []).map(x => ({ id: x.id, name: x.name, uri: x.uri })), images: al.images,
+        release_date: al.sortDate, album_type: al.album_type, total_tracks: al.total_tracks, url: al.external_urls && al.external_urls.spotify }));
+    state.rel = { at: Date.now(), artists: artists.length, items };
+    S.set('relCache', state.rel);
+  } catch (e) { if (handleAuthError(e)) return; e.message = friendly(e); state.relErr = e; }
+  state.relLoading = false; render();
+}
+function renderReleases(main) {
+  const r = state.rel || S.get('relCache');
+  main.append(h('div', { class: 'bar' },
+    h('small', { id: 'relProgress', text: state.relLoading ? state.relProgress : r ? 'Last 30 days from ' + r.artists + ' artists you follow · checked ' + timeAgo(new Date(r.at).toISOString()) : '' }),
+    h('button', { class: 'ghost', type: 'button', onclick: () => loadReleases(true), disabled: state.relLoading || null }, 'Check now')));
+  if (state.relErr && !r) { main.append(errorBox(state.relErr)); return; }
+  if (!r) { main.append(h('div', { class: 'empty', text: state.relLoading ? 'Checking each artist you follow. This takes a minute the first time, then refreshes once a day.' : 'Loading…' })); return; }
+  if (!r.artists) { main.append(h('div', { class: 'empty', text: 'You do not follow any artists yet. Follow artists in Spotify to see their new music here.' })); return; }
+  if (!r.items.length) { main.append(h('div', { class: 'empty', text: 'No new releases from artists you follow in the last 30 days.' })); return; }
+  const l = h('div', { class: 'list' });
+  for (const al of r.items) l.append(row({ img: al.images, kicker: artistNames(al.artists), title: al.name,
+    sub: [subLine(h('span', { class: 'pill new', text: fmtDate(al.release_date) }), al.album_type === 'single' ? 'Single or EP' : 'Album', al.total_tracks ? al.total_tracks + ' tracks' : null)],
+    onOpen: () => openAlbum(al), onPlay: () => play({ context_uri: al.uri }, al.name, null, al.url) }));
+  main.append(l);
+}
+
+/* ---------- listening history (kept on this device) ---------- */
+function histAdd(it) {
+  const hist = S.get('hist', []);
+  const last = hist[hist.length - 1];
+  if (last && last.u === it.uri && Date.now() - last.t < 10 * 60000) return;
+  hist.push({ u: it.uri, n: it.name, b: it.type === 'episode' ? (it.show && it.show.name) || '' : artistNames(it.artists), k: it.type === 'episode' ? 'e' : 't', t: Date.now() });
+  S.set('hist', hist.slice(-6000));
+}
+function histMerge(items) {
+  const hist = S.get('hist', []);
+  let added = 0;
+  for (const it of items || []) {
+    const t = Date.parse(it.played_at); if (!t || !it.track) continue;
+    if (hist.some(x => x.u === it.track.uri && Math.abs(x.t - t) < 4 * 60000)) continue;
+    hist.push({ u: it.track.uri, n: it.track.name, b: artistNames(it.track.artists), k: 't', t }); added++;
+  }
+  if (added) { hist.sort((a, b) => a.t - b.t); S.set('hist', hist.slice(-6000)); }
+}
+async function histMergeRecent() {
+  try { if (!S.get('tokens')) return; const r = await api('/me/player/recently-played?limit=50'); histMerge((r && r.items) || []); } catch {}
+}
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+function hourLabel(hr) { return hr === 0 ? '12am' : hr < 12 ? hr + 'am' : hr === 12 ? '12pm' : (hr - 12) + 'pm'; }
+function renderHeatmap(main) {
+  const hist = S.get('hist', []);
+  const since = Date.now() - 84 * 864e5;
+  const recent = hist.filter(x => x.t >= since);
+  const grid = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  for (const x of recent) { const d = new Date(x.t); grid[(d.getDay() + 6) % 7][d.getHours()]++; }
+  const max = Math.max(0, ...grid.flat());
+  main.append(h('div', { class: 'section', text: 'When you listen · last 12 weeks' }));
+  if (!recent.length) { main.append(h('div', { class: 'hint', text: 'Nothing recorded yet. Up Next logs what plays while it is open, and copies your last 50 songs from Spotify each visit.' })); return; }
+  const level = c => c === 0 ? '' : max <= 1 ? ' l4' : ' l' + Math.min(4, Math.ceil((c / max) * 4));
+  const box = h('div', { class: 'heat', role: 'img', 'aria-label': 'Plays by weekday and hour over the last 12 weeks' });
+  grid.forEach((rowArr, di) => {
+    box.append(h('span', { class: 'lab', text: DAYS[di], style: 'grid-row:' + (di + 1) + ';grid-column:1' }));
+    rowArr.forEach((c, hr) => {
+      const label = DAYS[di] + ' ' + hourLabel(hr) + ' to ' + hourLabel((hr + 1) % 24) + ': ' + c + ' play' + (c === 1 ? '' : 's');
+      box.append(h('button', { class: 'c' + level(c), type: 'button', title: label, 'aria-label': label, style: 'grid-row:' + (di + 1) + ';grid-column:' + (hr + 2), onclick: () => toast(label) }));
+    });
+  });
+  for (const hr of [0, 6, 12, 18]) box.append(h('span', { class: 'hr', text: hourLabel(hr), style: 'grid-column:' + (hr + 2) + ' / span 4' }));
+  main.append(box);
+  main.append(h('div', { class: 'legend' }, 'Fewer', ...['', ' l1', ' l2', ' l3', ' l4'].map(l => h('span', { class: 'c' + l, style: 'width:12px;height:12px;aspect-ratio:auto' })), 'More'));
+  // headline numbers and a plain-text reading of the chart
+  let bd = 0, bh = 0; grid.forEach((r, d) => r.forEach((c, hr) => { if (c > grid[bd][bh]) { bd = d; bh = hr; } }));
+  const counts = {}; for (const x of recent) if (x.b) counts[x.b] = (counts[x.b] || 0) + 1;
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  const eps = recent.filter(x => x.k === 'e').length;
+  main.append(h('div', { class: 'stats' },
+    h('div', {}, h('b', { text: recent.length }), 'plays logged'),
+    h('div', {}, h('b', { text: DAYS[bd] + ' ' + hourLabel(bh) }), 'busiest hour'),
+    top ? h('div', {}, h('b', { text: top[0] }), 'most played (' + top[1] + ')') : null,
+    h('div', {}, h('b', { text: eps }), 'podcast episodes')));
+  main.append(h('div', { class: 'hint', text: 'Logged since ' + new Date(hist[0].t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + '. Spotify only shares your last 50 songs, so this fills in over time. Podcasts are only counted when they play through Up Next or while it is open.' }));
+}
+
 /* ---------- screens ---------- */
 function errorBox(e) {
   const msg = e.status === 403 && !/scope/i.test(e.message || '') ? 'Spotify refused access. If you created the app recently, add your Spotify email under User Management in the developer dashboard.' : friendly(e);
@@ -1364,7 +1616,7 @@ function render() {
   const focusId = document.activeElement && document.activeElement.id === 'likedFilter' ? 'likedFilter' : null;
   main.replaceChildren();
   if (missingScopes().length) main.append(h('div', { class: 'banner' },
-    h('span', { text: 'New features need one more Spotify approval: liking songs, saving to playlists, no-repeat shuffle and your top lists. Playback keeps working meanwhile.' }),
+    h('span', { text: 'New features need one more Spotify approval: liking songs, saving to playlists, no-repeat shuffle, your top lists and new releases from artists you follow. Playback keeps working meanwhile.' }),
     h('button', { class: 'ghost', type: 'button', onclick: () => login() }, 'Reconnect')));
   if (searching) renderSearch(main);
   else if (state.tab === 'pods') renderPods(main);
@@ -1398,12 +1650,18 @@ async function boot() {
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', () => { if (sheetStack.length > 1) { sheetStack.pop(); paintSheet(); } });
   $('sheet').addEventListener('close', () => { sheetStack.length = 0; });
-  $('nowToggle').addEventListener('click', () => {
-    if (localActive() && localId) { try { player.activateElement(); } catch {} player.togglePlay(); return; }
-    if (localActive() && !localId) { const it = state.player.item; if (it) play(it.type === 'episode' ? { uris: [it.uri], position_ms: Math.round(posNow()) } : (state.player.context ? { context_uri: state.player.context.uri, offset: { uri: it.uri }, position_ms: Math.round(posNow()) } : { uris: [it.uri], position_ms: Math.round(posNow()) }), it.name, 'local'); return; }
-    playerCmd(state.player && state.player.is_playing ? '/me/player/pause' : '/me/player/play', 'PUT');
-  });
-  $('nowNext').addEventListener('click', () => { if (localActive()) { player.nextTrack(); return; } playerCmd('/me/player/next', 'POST'); });
+  $('nowToggle').addEventListener('click', () => togglePlayback());
+  $('nowNext').addEventListener('click', skipNext);
+  $('nowMark').addEventListener('click', openMark);
+  $('markCancel').addEventListener('click', () => $('markDialog').close());
+  $('nowCar').addEventListener('click', openCar);
+  $('carClose').addEventListener('click', closeCar);
+  $('carToggle').addEventListener('click', () => togglePlayback());
+  $('carBack').addEventListener('click', () => seekBy(-30000));
+  $('carFwd').addEventListener('click', () => seekBy(30000));
+  $('carNext').addEventListener('click', skipNext);
+  setInterval(() => { if (!$('car').hidden) paintCarPos(); }, 1000);
+  histMergeRecent();
   const seekEl = $('seek');
   seekEl.addEventListener('input', () => { pos.dragging = true; paintPos(Number(seekEl.value)); });
   seekEl.addEventListener('change', () => { pos.dragging = false; seekTo(Number(seekEl.value)); });
@@ -1413,7 +1671,7 @@ async function boot() {
   $('nowLike').addEventListener('click', toggleLike);
   $('nowQueue').addEventListener('click', openQueue);
   $('nowSave').addEventListener('click', () => saveToPlaylist(false));
-  document.addEventListener('visibilitychange', () => { if (document.hidden || !S.get('tokens')) return; checkLocalAlive(); refreshPlayer(); if (!state.q) loadTab(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden || !S.get('tokens')) return; if (!$('car').hidden && !wakeLock) keepAwake(); checkLocalAlive(); refreshPlayer(); if (!state.q) loadTab(); });
 
   const params = new URLSearchParams(location.search);
   if (params.has('code') || params.has('error')) {
