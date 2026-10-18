@@ -520,7 +520,7 @@ function slimEp(e) { return e && { id: e.id, uri: e.uri, name: e.name, release_d
   resume_point: e.resume_point, url: e.external_urls && e.external_urls.spotify, images: e.images }; }
 async function loadShows(force = false) {
   const c = S.get('showsCache');
-  if (!force && c && Date.now() - c.at < FRESH_MS) { state.shows = c.list; state.showsAt = c.at; render(); return; }
+  if (!force && c && Date.now() - c.at < FRESH_MS) { state.shows = c.list; state.showsAt = c.at; podLogFromShows(state.shows); render(); return; }
   if (c && !state.shows) { state.shows = c.list; state.showsAt = c.at; }
   if (state.showsLoading) return;
   state.showsLoading = true; state.showsErr = null; state.progress = 'Fetching your podcasts'; render();
@@ -536,6 +536,7 @@ async function loadShows(force = false) {
     state.shows = list.filter(x => x && !x.error);
     state.showsAt = Date.now();
     S.set('showsCache', { at: state.showsAt, list: state.shows });
+    podLogFromShows(state.shows);
     const failed = list.filter(x => x && x.error).length;
     if (failed) toast(failed + ' show' + (failed > 1 ? 's' : '') + ' could not be checked. Try Refresh in a minute.');
   } catch (e) { if (handleAuthError(e)) return; state.showsErr = e; }
@@ -797,6 +798,12 @@ function renderLib(main) {
   const v = state.libView;
   if (v === 'liked') return renderLiked(main);
   if (v === 'marks') return renderMarks(main);
+  if (v === 'history') {
+    const hv = S.get('histView', 'pods');
+    main.append(h('div', { class: 'chips' }, ...[['pods', 'Podcasts'], ['songs', 'Songs']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(hv === k),
+      onclick: () => { S.set('histView', k); render(); if (k === 'songs') loadLibView(); } }, l))));
+    if (hv === 'pods') return renderPodHist(main);
+  }
   if (v === 'releases') return renderReleases(main);
   const key = v === 'top' ? 'top:' + state.topRange : v;
   if (v === 'top') main.append(h('div', { class: 'chips' }, ...[['short_term', 'Last 4 weeks'], ['medium_term', 'Last 6 months'], ['long_term', 'All time']]
@@ -1300,6 +1307,7 @@ function paintPlayer() {
   const sp = S.get('savePl'); $('nowSaveName').textContent = sp ? sp.name : 'Add';
   $('nowSave').setAttribute('aria-label', sp ? 'Add this song to ' + sp.name : 'Choose a playlist to save songs to');
   $('nowMark').hidden = !isEp;
+  if (isEp) podLogFromPlayer(p);
   if (it.uri && p.is_playing && it.uri !== state.lastItemUri) { state.lastItemUri = it.uri; onItemChange(it); }
   paintCar();
   if (!isEp && it.uri && it.uri !== state.likeUri) {
@@ -1438,6 +1446,77 @@ function renderMarks(main) {
 const autoQueued = new Set();
 function onItemChange(it) {
   if (it.type === 'episode') maybeQueueInbox(it);
+}
+
+/* ---------- podcast history (kept on this device) ----------
+   Two sources: episodes playing while Up Next is open (exact), and episodes whose Spotify
+   progress has moved since the last check (catches listening in the Spotify app, time approximate). */
+function podHist() { return S.get('podHist', []); }
+function podUpsert(e) {
+  const list = podHist(); const i = list.findIndex(x => x.id === e.id);
+  const prev = i === -1 ? null : list.splice(i, 1)[0];
+  list.unshift({ ...(prev || {}), ...e });
+  S.set('podHist', list.slice(0, 500));
+}
+let podLastWrite = { id: null, t: 0, playing: null };
+function podLogFromPlayer(p) {
+  const it = p && p.item; if (!it || it.type !== 'episode' || !p.is_playing && podLastWrite.playing === false) return;
+  const id = it.id || (it.uri || '').split(':').pop(); if (!id) return;
+  const now = Date.now();
+  if (podLastWrite.id === id && podLastWrite.playing === !!p.is_playing && now - podLastWrite.t < 30000) return;
+  podLastWrite = { id, t: now, playing: !!p.is_playing };
+  const showName = (it.show && it.show.name) || artistNames(it.artists);
+  const sh = (state.shows || []).find(x => (it.show && x.show.id === it.show.id) || x.show.name === showName);
+  const dur = it.duration_ms || pos.dur || 0, at = Math.round(posNow());
+  podUpsert({ id, uri: it.uri || 'spotify:episode:' + id, name: it.name, show: showName, showId: sh ? sh.show.id : (it.show && it.show.id) || null,
+    dur, pos: at, done: dur ? at >= dur - 60000 : false, t: now, src: 'app' });
+}
+function podLogFromShows(shows) {
+  const list = podHist(), byId = new Map(list.map(x => [x.id, x]));
+  const first = !S.get('podHistInit');
+  let changed = false;
+  for (const s of shows || []) for (const e of s.eps || []) {
+    const rp = e.resume_point || {}; const p0 = rp.resume_position_ms || 0, done = !!rp.fully_played;
+    if (!done && p0 <= 0) continue;
+    const old = byId.get(e.id);
+    if (old && old.done === done && Math.abs((old.pos || 0) - p0) < 60000) continue;
+    const entry = { id: e.id, uri: e.uri, name: e.name, show: s.show.name, showId: s.show.id, dur: e.duration_ms, pos: p0, done,
+      t: old ? Date.now() : first ? Date.parse(e.release_date) || Date.now() : Date.now(), src: old && old.src === 'app' ? 'app' : 'spotify', early: first && !old };
+    if (old) Object.assign(old, entry); else { list.push(entry); byId.set(e.id, entry); }
+    changed = true;
+  }
+  if (changed) { list.sort((a, b) => b.t - a.t); S.set('podHist', list.slice(0, 500)); }
+  if (first) S.set('podHistInit', true);
+}
+function renderPodHist(main) {
+  const list = podHist();
+  main.append(h('div', { class: 'bar' }, h('small', { text: list.length ? list.length + ' episodes' : '' }),
+    h('span', { class: 'actions', style: 'gap:6px' },
+      list.length ? h('button', { class: 'ghost', type: 'button', id: 'phClear', onclick: e => {
+        const b = e.currentTarget; if (b.dataset.sure) { S.set('podHist', []); render(); toast('Podcast history cleared'); return; }
+        b.dataset.sure = '1'; b.textContent = 'Tap again to clear'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = 'Clear'; } }, 4000); } }, 'Clear') : null,
+      h('button', { class: 'ghost', type: 'button', onclick: () => loadShows(true) }, 'Check Spotify'))));
+  if (!list.length) { main.append(h('div', { class: 'empty', text: 'No podcast history yet. Episodes you play in Up Next appear here, plus ones you listen to in the Spotify app (picked up when Up Next checks your shows).' })); return; }
+  const l = h('div', { class: 'list' });
+  for (const x of list) {
+    const sh = (state.shows || []).find(s => s.show.id === x.showId);
+    const left = x.dur ? Math.max(0, x.dur - (x.pos || 0)) : 0;
+    const when = x.early ? 'Before Up Next' : (x.src === 'app' ? 'Played ' : 'Seen ') + histWhen(x.t);
+    l.append(row({ img: sh && sh.show.images, kicker: x.show, title: x.name,
+      sub: [subLine(x.done ? h('span', { class: 'pill done', text: 'Finished' }) : h('span', { class: 'pill resume', text: fmtDur(left) + ' left' }), when)],
+      onOpen: sh ? () => openShow(sh.show) : null,
+      onQueue: () => queueUri(x.uri, x.name),
+      playLabel: x.done ? 'Play again ' : 'Resume ',
+      onPlay: () => play({ uris: [x.uri], position_ms: x.done ? 0 : (x.pos || 0) }, x.name) }));
+  }
+  main.append(l, h('div', { class: 'hint', text: '"Played" means it played while Up Next was open. "Seen" means Spotify showed new progress when Up Next checked, so the time is when it was noticed, not exactly when you listened. Kept on this device only.' }));
+}
+function histWhen(t) {
+  const d = new Date(t), now = new Date();
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return 'today ' + time;
+  if (d.toDateString() === new Date(now - 864e5).toDateString()) return 'yesterday ' + time;
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 async function maybeQueueInbox(it, manual) {
   if (!S.get('autoNext') || !it || it.type !== 'episode' || !state.shows) return;
@@ -1775,6 +1854,7 @@ async function boot() {
   $('carMic').addEventListener('click', startVoice);
   setInterval(() => { if (!$('car').hidden) paintCarPos(); }, 1000);
   S.del('hist');
+  if (state.shows) podLogFromShows(state.shows);
   const seekEl = $('seek');
   seekEl.addEventListener('input', () => { pos.dragging = true; paintPos(Number(seekEl.value)); });
   seekEl.addEventListener('change', () => { pos.dragging = false; seekTo(Number(seekEl.value)); });
