@@ -1019,27 +1019,56 @@ function target() { return S.get('target', 'local'); }
 function localWanted() { return target() === 'local' && hasStreamingScope(); }
 function isLocalDevice(dev) { return !!dev && (dev.id === localId || dev.name === LOCAL_NAME); }
 function primeLocal() { if (localWanted()) ensureLocal().catch(() => {}); }
+/* The built-in player can be dropped by Spotify after a while idle, or when Safari pauses the page.
+   So a stale device id is never reused: on 'not_ready' or a "device not found" reply we reconnect and wait
+   for a fresh id. */
+let readyWaiter = null;
+function waitReady() {
+  if (readyWaiter) return readyWaiter.promise;
+  let res, rej;
+  const promise = new Promise((r, j) => { res = r; rej = j; });
+  const t = setTimeout(() => fail(new Error('The built-in player did not start. Check your connection and try again.')), 12000);
+  const done = () => { clearTimeout(t); if (readyWaiter && readyWaiter.promise === promise) readyWaiter = null; };
+  const fail = e => { done(); rej(e); };
+  readyWaiter = { promise, resolve: id => { done(); res(id); }, reject: fail };
+  return promise;
+}
 function ensureLocal() { // call synchronously from a tap, before any await
   if (!sdkLoaded || !window.Spotify) return Promise.reject(new Error('The built-in player is still loading. Try again in a moment.'));
   if (!player) {
     const p = new window.Spotify.Player({ name: LOCAL_NAME, volume: 0.9,
       getOAuthToken: cb => { accessToken().then(cb, () => cb('')); } });
     player = p;
-    localReady = new Promise((res, rej) => {
-      p.addListener('ready', ({ device_id }) => { localId = device_id; res(device_id); });
-      p.addListener('initialization_error', ({ message }) => rej(new Error('This browser cannot play Spotify here: ' + message)));
-      p.addListener('authentication_error', () => rej(new Error('Reconnect Spotify so Up Next can play here.')));
-      p.addListener('account_error', () => rej(new Error('Playing inside Up Next needs a full Spotify Premium plan.')));
-      setTimeout(() => rej(new Error('The built-in player did not start. Check your connection and try again.')), 12000);
-    }).catch(e => { try { p.disconnect(); } catch {} if (player === p) { player = null; localReady = null; localId = null; } throw e; });
+    p.addListener('ready', ({ device_id }) => { localId = device_id; if (readyWaiter) readyWaiter.resolve(device_id); });
     p.addListener('not_ready', () => { localId = null; });
+    const failAll = e => { if (readyWaiter) readyWaiter.reject(e); };
+    p.addListener('initialization_error', ({ message }) => { failAll(new Error('This browser cannot play Spotify here: ' + message)); try { p.disconnect(); } catch {} player = null; });
+    p.addListener('authentication_error', () => failAll(new Error('Reconnect Spotify so Up Next can play here.')));
+    p.addListener('account_error', () => failAll(new Error('Playing inside Up Next needs a full Spotify Premium plan.')));
     p.addListener('playback_error', ({ message }) => toast('Playback error: ' + message, 5000));
     p.addListener('autoplay_failed', () => toast('iOS blocked the start. Tap play in the bar below.', 6000));
     p.addListener('player_state_changed', s => paintLocal(s));
-    p.connect();
+    const w = waitReady(); p.connect(); try { p.activateElement(); } catch {}
+    return w;
   }
   try { player.activateElement(); } catch {}
-  return localReady;
+  if (localId) return Promise.resolve(localId);
+  const w = waitReady(); player.connect(); return w;
+}
+function reconnectLocal() {
+  if (!player) return ensureLocal();
+  localId = null;
+  const w = waitReady();
+  try { player.disconnect(); } catch {}
+  setTimeout(() => player && player.connect(), 300);
+  return w;
+}
+async function checkLocalAlive() {
+  if (!player || !localId || !localWanted()) return;
+  try {
+    const r = await api('/me/player/devices');
+    if (!((r && r.devices) || []).some(d => d.id === localId)) reconnectLocal().catch(() => {});
+  } catch {}
 }
 function paintLocal(s) {
   if (!s) return;
@@ -1077,8 +1106,14 @@ async function playAsync(item, deviceId, localP) {
   try {
     toast('Starting ' + (name || '') + '…', 8000);
     if (localP) {
-      const id = await localP;
-      await playOn(id);
+      let id = await localP;
+      try { await playOn(id); }
+      catch (e) {
+        if (e.status !== 404) throw e;
+        toast('Reconnecting the built-in player…', 8000);   // Spotify dropped the old device
+        id = await reconnectLocal();
+        await playOn(id);
+      }
       await sleep(1500);
       const s = await player.getCurrentState().catch(() => null);
       if (s && !s.paused) { pendingPlay = null; toast('Playing ' + (name || '')); }
@@ -1339,7 +1374,8 @@ async function boot() {
   $('sheetBack').addEventListener('click', () => { if (sheetStack.length > 1) { sheetStack.pop(); paintSheet(); } });
   $('sheet').addEventListener('close', () => { sheetStack.length = 0; });
   $('nowToggle').addEventListener('click', () => {
-    if (localActive()) { try { player.activateElement(); } catch {} player.togglePlay(); return; }
+    if (localActive() && localId) { try { player.activateElement(); } catch {} player.togglePlay(); return; }
+    if (localActive() && !localId) { const it = state.player.item; if (it) play(it.type === 'episode' ? { uris: [it.uri], position_ms: Math.round(posNow()) } : (state.player.context ? { context_uri: state.player.context.uri, offset: { uri: it.uri }, position_ms: Math.round(posNow()) } : { uris: [it.uri], position_ms: Math.round(posNow()) }), it.name, 'local'); return; }
     playerCmd(state.player && state.player.is_playing ? '/me/player/pause' : '/me/player/play', 'PUT');
   });
   $('nowNext').addEventListener('click', () => { if (localActive()) { player.nextTrack(); return; } playerCmd('/me/player/next', 'POST'); });
@@ -1351,7 +1387,7 @@ async function boot() {
   $('nowFwd').addEventListener('click', () => seekBy(30000));
   $('nowLike').addEventListener('click', toggleLike);
   $('nowSave').addEventListener('click', () => saveToPlaylist(false));
-  document.addEventListener('visibilitychange', () => { if (document.hidden || !S.get('tokens')) return; refreshPlayer(); if (!state.q) loadTab(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden || !S.get('tokens')) return; checkLocalAlive(); refreshPlayer(); if (!state.q) loadTab(); });
 
   const params = new URLSearchParams(location.search);
   if (params.has('code') || params.has('error')) {
@@ -1364,6 +1400,7 @@ async function boot() {
   me().catch(() => {});
   refreshPlayer();
   setInterval(refreshPlayer, 60000);
+  setInterval(checkLocalAlive, 5 * 60000);
 }
 boot();
 </script>
