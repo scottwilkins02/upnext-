@@ -123,6 +123,7 @@ h1 span { color: var(--accent); }
 .now .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .now .s { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .icon .lbl { font: 600 10px/1 var(--body); }
+#nowSaveName { max-width: 7em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon.txt { width: auto; padding: 0 10px; border-radius: 999px; gap: 4px; display: inline-flex; font-size: 12.5px; font-weight: 600; }
 
 dialog { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 16px; padding: 18px; width: min(92vw, 460px); max-height: 84vh; }
@@ -182,6 +183,7 @@ footer small { color: var(--muted); text-align: center; }
       <button class="icon" id="nowLike" type="button" aria-label="Like" aria-pressed="false"></button>
       <button class="icon txt" id="nowSave" type="button" aria-label="Add to your saving playlist"><svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14-1v-3h2v3h3v2h-3v3h-2v-3h-3v-2z"/></svg><span id="nowSaveName">Add</span></button>
       <button class="icon txt" id="nowFwd" type="button" aria-label="Forward 30 seconds">30<svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/></svg></button>
+      <button class="icon" id="nowQueue" type="button" aria-label="Show the queue"><svg viewBox="0 0 24 24"><path d="M3 5h14v2H3zm0 4h14v2H3zm0 4h9v2H3zm12 0v6l5-3z"/></svg></button>
       <button class="icon" id="nowNext" type="button" aria-label="Skip"><svg viewBox="0 0 24 24"><path d="M6 6l8.5 6L6 18V6zm10 0h2v12h-2z"/></svg></button>
     </div>
   </div>
@@ -1004,6 +1006,29 @@ function openPlaylist(p) {
   });
 }
 
+/* ---------- queue view ---------- */
+function queueItemRow(it, kicker) {
+  if (it.type === 'episode') return row({ img: it.images || (it.show && it.show.images), kicker: kicker || (it.show && it.show.name), title: it.name,
+    sub: [subLine(it.show && kicker ? it.show.name : null, fmtDur(it.duration_ms))] });
+  return row({ img: it.album && it.album.images, kicker, title: it.name, onOpen: it.album && it.album.id ? () => openAlbum(it.album) : null,
+    sub: [subLine(artistNames(it.artists), fmtClock(it.duration_ms))] });
+}
+function openQueue() {
+  openSheet('Queue', async box => {
+    const r = await api('/me/player/queue');
+    const cur = r && r.currently_playing, upcoming = ((r && r.queue) || []).filter(Boolean);
+    box.append(h('div', { class: 'bar' }, h('small', { text: upcoming.length ? upcoming.length + ' coming up' : '' }),
+      h('button', { class: 'ghost', type: 'button', onclick: () => { sheetStack.pop(); openQueue(); } }, 'Refresh')));
+    if (!cur && !upcoming.length) { box.append(h('div', { class: 'empty', text: 'Nothing is playing, so there is no queue yet.' })); return; }
+    if (cur) { box.append(h('div', { class: 'section', text: 'Now playing' })); box.append(h('div', { class: 'list' }, queueItemRow(cur))); }
+    if (upcoming.length) {
+      box.append(h('div', { class: 'section', text: 'Coming up' }));
+      const l = h('div', { class: 'list' }); upcoming.forEach((it, i) => l.append(queueItemRow(it, (i + 1) + '.'))); box.append(l);
+    }
+    box.append(h('div', { class: 'hint', text: 'This list can include the rest of the album or playlist as well as songs you queued. Spotify does not mark which is which, and apps cannot remove or reorder queue items, so do that in the Spotify app.' }));
+  });
+}
+
 /* ---------- playback ---------- */
 let pendingPlay = null;
 /* Local player: Up Next itself becomes a Spotify device via the Web Playback SDK, so the iPad
@@ -1386,6 +1411,7 @@ async function boot() {
   $('nowBack').addEventListener('click', () => seekBy(-15000));
   $('nowFwd').addEventListener('click', () => seekBy(30000));
   $('nowLike').addEventListener('click', toggleLike);
+  $('nowQueue').addEventListener('click', openQueue);
   $('nowSave').addEventListener('click', () => saveToPlaylist(false));
   document.addEventListener('visibilitychange', () => { if (document.hidden || !S.get('tokens')) return; checkLocalAlive(); refreshPlayer(); if (!state.q) loadTab(); });
 
