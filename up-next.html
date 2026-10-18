@@ -166,9 +166,6 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
 .carmic[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .carheard { min-height: 1.4em; font-size: clamp(18px, 3.5vw, 26px); color: var(--ink); font-style: italic; }
 .carstatus { text-align: center; color: var(--muted); font-size: 13px; padding-top: 10px; }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; padding-block: 12px 4px; }
-.stats div { font-size: 13px; color: var(--muted); }
-.stats b { display: block; color: var(--ink); font-size: 15px; }
 .toggle { display: flex; gap: 10px; align-items: center; font-size: 13.5px; padding-block: 8px 2px; }
 footer { padding-block: 30px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 footer .links { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
@@ -828,8 +825,6 @@ function renderLib(main) {
     main.append(al);
     return;
   } else if (v === 'history') {
-    renderHistoryStats(main);
-    main.append(h('div', { class: 'section', text: 'Recently played songs' }));
     if (!data.length) list.append(h('div', { class: 'empty', text: 'Nothing played recently.' }));
     data.forEach(it => list.append(trackRow(it.track, () => play({ uris: [it.track.uri] }, it.track.name), timeAgo(it.played_at))));
     main.append(list, h('div', { class: 'hint', text: 'Spotify only shares your last 50 songs here, and no podcast episodes.' }));
@@ -853,7 +848,7 @@ async function loadLibView(force = false) {
   try {
     if (v === 'episodes') state.lib[key] = (await getAll('/me/episodes?limit=50', 200)).map(it => it && it.episode).filter(Boolean);
     else if (v === 'books') state.lib[key] = (await getAll('/me/audiobooks?limit=50', 200)).map(it => it && (it.audiobook || it)).filter(Boolean);
-    else if (v === 'history') { state.lib[key] = ((await api('/me/player/recently-played?limit=50')).items || []).filter(it => it && it.track); histMerge(state.lib[key]); }
+    else if (v === 'history') { state.lib[key] = ((await api('/me/player/recently-played?limit=50')).items || []).filter(it => it && it.track); }
     else if (v === 'top') {
       const [t, a] = await Promise.all([api('/me/top/tracks?limit=30&time_range=' + state.topRange), api('/me/top/artists?limit=20&time_range=' + state.topRange)]);
       state.lib[key] = { tracks: (t.items || []).filter(Boolean), artists: (a.items || []).filter(Boolean) };
@@ -1442,7 +1437,6 @@ function renderMarks(main) {
 /* ---------- auto-play the next new episode ---------- */
 const autoQueued = new Set();
 function onItemChange(it) {
-  histAdd(it);
   if (it.type === 'episode') maybeQueueInbox(it);
 }
 async function maybeQueueInbox(it, manual) {
@@ -1506,50 +1500,6 @@ function renderReleases(main) {
     sub: [subLine(h('span', { class: 'pill new', text: fmtDate(al.release_date) }), al.album_type === 'single' ? 'Single or EP' : 'Album', al.total_tracks ? al.total_tracks + ' tracks' : null)],
     onOpen: () => openAlbum(al), onPlay: () => play({ context_uri: al.uri }, al.name, null, al.url) }));
   main.append(l);
-}
-
-/* ---------- listening history (kept on this device) ---------- */
-function histAdd(it) {
-  const hist = S.get('hist', []);
-  const last = hist[hist.length - 1];
-  if (last && last.u === it.uri && Date.now() - last.t < 10 * 60000) return;
-  hist.push({ u: it.uri, n: it.name, b: it.type === 'episode' ? (it.show && it.show.name) || '' : artistNames(it.artists), k: it.type === 'episode' ? 'e' : 't', t: Date.now() });
-  S.set('hist', hist.slice(-6000));
-}
-function histMerge(items) {
-  const hist = S.get('hist', []);
-  let added = 0;
-  for (const it of items || []) {
-    const t = Date.parse(it.played_at); if (!t || !it.track) continue;
-    if (hist.some(x => x.u === it.track.uri && Math.abs(x.t - t) < 4 * 60000)) continue;
-    hist.push({ u: it.track.uri, n: it.track.name, b: artistNames(it.track.artists), k: 't', t }); added++;
-  }
-  if (added) { hist.sort((a, b) => a.t - b.t); S.set('hist', hist.slice(-6000)); }
-}
-async function histMergeRecent() {
-  try { if (!S.get('tokens')) return; const r = await api('/me/player/recently-played?limit=50'); histMerge((r && r.items) || []); } catch {}
-}
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-function hourLabel(hr) { return hr === 0 ? '12am' : hr < 12 ? hr + 'am' : hr === 12 ? '12pm' : (hr - 12) + 'pm'; }
-function renderHistoryStats(main) {
-  const hist = S.get('hist', []);
-  const since = Date.now() - 84 * 864e5;
-  const recent = hist.filter(x => x.t >= since);
-  const grid = Array.from({ length: 7 }, () => new Array(24).fill(0));
-  for (const x of recent) { const d = new Date(x.t); grid[(d.getDay() + 6) % 7][d.getHours()]++; }
-  const max = Math.max(0, ...grid.flat());
-  main.append(h('div', { class: 'section', text: 'Your listening log · last 12 weeks' }));
-  if (!recent.length) { main.append(h('div', { class: 'hint', text: 'Nothing recorded yet. Up Next logs what plays while it is open, and copies your last 50 songs from Spotify each visit.' })); return; }
-  let bd = 0, bh = 0; grid.forEach((r, d) => r.forEach((c, hr) => { if (c > grid[bd][bh]) { bd = d; bh = hr; } }));
-  const counts = {}; for (const x of recent) if (x.b) counts[x.b] = (counts[x.b] || 0) + 1;
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-  const eps = recent.filter(x => x.k === 'e').length;
-  main.append(h('div', { class: 'stats' },
-    h('div', {}, h('b', { text: recent.length }), 'plays logged'),
-    h('div', {}, h('b', { text: DAYS[bd] + ' ' + hourLabel(bh) }), 'busiest hour'),
-    top ? h('div', {}, h('b', { text: top[0] }), 'most played (' + top[1] + ')') : null,
-    h('div', {}, h('b', { text: eps }), 'podcast episodes')));
-  main.append(h('div', { class: 'hint', text: 'Logged since ' + new Date(hist[0].t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + '. Spotify only shares your last 50 songs, so this fills in over time. Podcasts are only counted when they play through Up Next or while it is open.' }));
 }
 
 /* ---------- voice commands ---------- */
@@ -1824,7 +1774,7 @@ async function boot() {
   $('carNext').addEventListener('click', skipNext);
   $('carMic').addEventListener('click', startVoice);
   setInterval(() => { if (!$('car').hidden) paintCarPos(); }, 1000);
-  histMergeRecent();
+  S.del('hist');
   const seekEl = $('seek');
   seekEl.addEventListener('input', () => { pos.dragging = true; paintPos(Number(seekEl.value)); });
   seekEl.addEventListener('change', () => { pos.dragging = false; seekTo(Number(seekEl.value)); });
@@ -1841,6 +1791,7 @@ async function boot() {
     try { await handleCallback(params); } catch (e) { renderSetup(e.message); return; }
   }
   if (!S.get('clientId') || !S.get('tokens')) { renderSetup(); return; }
+  state.tab = 'lib'; state.libView = 'history';
   render(); loadTab();
   if (state.tab !== 'pods') loadShows(); // shows feed routines, search and the New inbox
   if (state.tab !== 'lists') loadLists();
