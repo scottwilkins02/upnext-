@@ -143,7 +143,7 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
 .sheetbody { overflow-y: auto; padding: 0 16px 24px; flex: 1; }
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(170px + env(safe-area-inset-bottom, 0px));
-  background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 10px; font-size: 14px; z-index: 9; max-width: calc(100vw - 32px); }
+  background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 10px; font-size: 14px; z-index: 30; max-width: calc(100vw - 32px); }
 .banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 14px; }
 .banner span { flex: 1 1 240px; min-width: 0; }
 .car { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column;
@@ -159,7 +159,12 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
 .carbtns button, .carnext { border: 0; border-radius: 24px; background: var(--surface); color: var(--ink); font: 800 26px/1 var(--display); min-height: 120px; box-shadow: 0 0 0 1px var(--line); }
 .carbtns .big { background: var(--accent); color: var(--accent-ink); }
 .carbtns svg { width: 54px; height: 54px; fill: currentColor; }
-.carnext { margin-top: 14px; min-height: 84px; width: 100%; font-size: 22px; }
+.carrow2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; margin-top: 14px; }
+.carnext { min-height: 96px; width: 100%; font-size: 22px; }
+.carmic { border: 3px solid var(--accent); border-radius: 24px; background: var(--surface); color: var(--ink); font: 800 24px/1 var(--display); min-height: 96px; display: flex; align-items: center; justify-content: center; gap: 12px; }
+.carmic svg { width: 40px; height: 40px; fill: currentColor; }
+.carmic[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.carheard { min-height: 1.4em; font-size: clamp(18px, 3.5vw, 26px); color: var(--ink); font-style: italic; }
 .carstatus { text-align: center; color: var(--muted); font-size: 13px; padding-top: 10px; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; padding-block: 12px 4px; }
 .stats div { font-size: 13px; color: var(--muted); }
@@ -264,13 +269,16 @@ footer small { color: var(--muted); text-align: center; }
 </dialog>
 <div class="car" id="car" hidden role="dialog" aria-label="Car mode">
   <div class="carhead"><h2>Car mode</h2><button class="ghost" id="carClose" type="button">Close</button></div>
-  <div class="carmeta"><div class="s" id="carS"></div><div class="t" id="carT">Nothing playing</div><div class="p" id="carP"></div></div>
+  <div class="carmeta"><div class="s" id="carS"></div><div class="t" id="carT">Nothing playing</div><div class="p" id="carP"></div><div class="carheard" id="carHeard" aria-live="polite"></div></div>
   <div class="carbtns">
     <button id="carBack" type="button" aria-label="Back 30 seconds">−30</button>
     <button id="carToggle" class="big" type="button" aria-label="Play or pause"></button>
     <button id="carFwd" type="button" aria-label="Forward 30 seconds">+30</button>
   </div>
-  <button class="carnext" id="carNext" type="button">Next</button>
+  <div class="carrow2">
+    <button class="carmic" id="carMic" type="button" aria-pressed="false" aria-label="Speak a command"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1a7 7 0 0 0 6-6.9z"/></svg><span id="carMicLabel">Speak</span></button>
+    <button class="carnext" id="carNext" type="button">Next</button>
+  </div>
   <div class="carstatus" id="carStatus"></div>
 </div>
 <dialog id="markDialog">
@@ -1611,7 +1619,7 @@ async function runCommand(text) {
     }
   } catch (e) { toast(friendly(e)); }
 }
-function voiceSearch(q) { $('q').value = q; onSearchInput(q); clearTimeout(searchTimer); if (q.trim().length >= 2) runSearch(q.trim()); }
+function voiceSearch(q) { if (inCar()) closeCar(); $('q').value = q; onSearchInput(q); clearTimeout(searchTimer); if (q.trim().length >= 2) runSearch(q.trim()); }
 function quickMark() {
   const it = state.player && state.player.item; if (!it) { toast('Nothing is playing to bookmark.'); return; }
   const at = Math.round(posNow());
@@ -1662,14 +1670,18 @@ async function voicePlay(q) {
   else play({ context_uri: x.uri }, x.name, null, url);
 }
 let recog = null, recogTimer = null;
+const inCar = () => !$('car').hidden;
 function voiceFallback(msg) {
   stopVoiceUi();
-  const q = $('q'); q.focus();
+  if (inCar()) { $('carHeard').textContent = ''; toast((msg || 'Voice did not start.').replace(/ ?Tap the microphone on the keyboard to dictate instead\.?| ?or tap the microphone on the keyboard to dictate\.?/, '') + ' Use the big buttons for now.', 6000); return; }
+  $('q').focus();
   toast(msg || 'Voice did not start here. Tap the microphone on the keyboard to dictate instead.', 6000);
 }
+function setVoiceLive(txt) { if (inCar()) $('carHeard').textContent = txt ? '“' + txt + '”' : ''; else $('q').value = txt; }
 function stopVoiceUi() {
   clearTimeout(recogTimer); recogTimer = null;
   $('qmic').setAttribute('aria-pressed', 'false');
+  $('carMic').setAttribute('aria-pressed', 'false'); $('carMicLabel').textContent = 'Speak';
   $('q').placeholder = 'Search songs, artists, podcasts, playlists';
 }
 function startVoice() {
@@ -1684,7 +1696,7 @@ function startVoice() {
   r.onresult = e => {
     heard = true;
     let txt = ''; for (let i = 0; i < e.results.length; i++) { txt += e.results[i][0].transcript; if (e.results[i].isFinal) finalText = txt; }
-    $('q').value = txt;
+    setVoiceLive(txt);
     clearTimeout(recogTimer); recogTimer = setTimeout(() => { try { r.stop(); } catch {} }, 2500);
   };
   r.onerror = e => {
@@ -1696,14 +1708,18 @@ function startVoice() {
   };
   r.onend = () => {
     const was = recog === r; recog = null; stopVoiceUi();
-    const text = (finalText || $('q').value || '').trim();
+    const text = (finalText || (inCar() ? '' : $('q').value) || '').trim();
     if (!was) return;
-    if (text) { $('q').value = ''; $('qclear').hidden = true; toast('Heard: "' + text + '"', 2500); runCommand(text); }
+    if (text) {
+      if (inCar()) { $('carHeard').textContent = '“' + text + '”'; setTimeout(() => { if ($('carHeard').textContent === '“' + text + '”') $('carHeard').textContent = ''; }, 5000); }
+      else { $('q').value = ''; $('qclear').hidden = true; }
+      toast('Heard: "' + text + '"', 2500); runCommand(text);
+    }
     else if (!heard) toast('Did not hear anything. Tap the mic and try again.');
   };
   try { r.start(); } catch { recog = null; voiceFallback(); return; }
-  $('qmic').setAttribute('aria-pressed', 'true');
-  $('q').value = ''; $('q').placeholder = 'Listening… say "play", "pause", "next episode of…"';
+  if (inCar()) { $('carMic').setAttribute('aria-pressed', 'true'); $('carMicLabel').textContent = 'Listening…'; $('carHeard').textContent = ''; }
+  else { $('qmic').setAttribute('aria-pressed', 'true'); $('q').value = ''; $('q').placeholder = 'Listening… say "play", "pause", "next episode of…"'; }
   // watchdog: iOS can freeze recognition without firing any event
   recogTimer = setTimeout(() => { if (recog === r && !heard) { try { r.abort(); } catch {} recog = null; voiceFallback('Voice recognition stopped responding. Tap the microphone on the keyboard to dictate instead.'); } }, 7000);
 }
@@ -1806,6 +1822,7 @@ async function boot() {
   $('carBack').addEventListener('click', () => seekBy(-30000));
   $('carFwd').addEventListener('click', () => seekBy(30000));
   $('carNext').addEventListener('click', skipNext);
+  $('carMic').addEventListener('click', startVoice);
   setInterval(() => { if (!$('car').hidden) paintCarPos(); }, 1000);
   histMergeRecent();
   const seekEl = $('seek');
