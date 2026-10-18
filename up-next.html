@@ -817,9 +817,10 @@ function renderLib(main) {
     if (!data.length) list.append(h('div', { class: 'empty', text: 'No saved episodes. Tap + on an episode in Spotify to save it.' }));
     for (const e of data) list.append(episodeRow(e, e.show && e.show.name, e.images || (e.show && e.show.images)));
   } else if (v === 'books') {
-    if (!data.length) list.append(h('div', { class: 'empty', text: 'No saved audiobooks.' }));
+    main.append(h('button', { class: 'primary', type: 'button', style: 'width:100%;margin-top:4px', onclick: openBookFinder }, 'Find great audiobooks'));
+    if (!data.length) list.append(h('div', { class: 'empty', text: 'No saved audiobooks yet.' }));
     for (const b of data) list.append(row({ img: b.images, kicker: artistNames(b.authors), title: b.name, sub: [subLine(b.total_chapters ? b.total_chapters + ' chapters' : null)],
-      onPlay: () => play({ context_uri: b.uri }, b.name, null, b.external_urls && b.external_urls.spotify) }));
+      onOpen: () => openBook(b), onPlay: () => play({ context_uri: b.uri }, b.name, null, b.external_urls && b.external_urls.spotify) }));
   } else if (v === 'top') {
     main.append(h('div', { class: 'section', text: 'Top songs' }));
     const uris = data.tracks.map(t => t.uri);
@@ -1579,6 +1580,116 @@ function renderReleases(main) {
     sub: [subLine(h('span', { class: 'pill new', text: fmtDate(al.release_date) }), al.album_type === 'single' ? 'Single or EP' : 'Album', al.total_tracks ? al.total_tracks + ' tracks' : null)],
     onOpen: () => openAlbum(al), onPlay: () => play({ context_uri: al.uri }, al.name, null, al.url) }));
   main.append(l);
+}
+
+/* ---------- audiobook finder with ratings ----------
+   Spotify supplies the audiobooks; ratings come from Open Library (free, no key), matched by title and author. */
+const BOOK_TOPICS = [['self', 'Self-improvement', 'self help habits mindset'], ['business', 'Business', 'business leadership'], ['bio', 'Biography & memoir', 'memoir biography'],
+  ['history', 'History', 'history'], ['thriller', 'Thriller & crime', 'thriller crime'], ['scifi', 'Sci-fi & fantasy', 'science fiction fantasy'], ['science', 'Science', 'popular science'],
+  ['sport', 'Sport & fitness', 'running sport fitness'], ['comedy', 'Comedy', 'comedy funny'], ['classic', 'Classics', 'classic novel']];
+const MIN_RATINGS = [[0, 'Any'], [3.5, '3.5+'], [4, '4+'], [4.3, '4.3+']];
+function bookFinderState() { return S.get('bookFinder', { q: '', topic: 'self', min: 4, sort: 'best' }); }
+function openBookFinder() { const st = bookFinderState(); openSheet('Find audiobooks', box => paintBookFinder(box, st)); }
+function paintBookFinder(box, st) {
+  const input = h('input', { class: 'search', id: 'bookQ', type: 'search', value: st.q, placeholder: 'Title, author or subject (optional)', 'aria-label': 'Audiobook search',
+    onkeydown: e => { if (e.key === 'Enter') go(); } });
+  const go = () => { st.q = input.value.trim(); S.set('bookFinder', st); findBooks(box, st); };
+  box.append(input,
+    h('div', { class: 'q5' }, h('h4', {}, 'Topic ', h('small', { text: 'tap again to clear' })),
+      h('div', { class: 'chips', style: 'padding-top:0' }, ...BOOK_TOPICS.map(([v, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(st.topic === v),
+        onclick: () => { st.q = input.value; st.topic = st.topic === v ? null : v; box.replaceChildren(); paintBookFinder(box, st); } }, l)))),
+    h('div', { class: 'q5' }, h('h4', {}, 'Minimum rating'),
+      h('div', { class: 'chips', style: 'padding-top:0' }, ...MIN_RATINGS.map(([v, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(st.min === v),
+        onclick: () => { st.q = input.value; st.min = v; box.replaceChildren(); paintBookFinder(box, st); } }, l)))),
+    h('div', { class: 'q5' }, h('h4', {}, 'Sort by'),
+      h('div', { class: 'chips', style: 'padding-top:0' }, ...[['best', 'Best rated'], ['most', 'Most rated'], ['match', 'Best match']].map(([v, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(st.sort === v),
+        onclick: () => { st.q = input.value; st.sort = v; box.replaceChildren(); paintBookFinder(box, st); } }, l)))),
+    h('div', { style: 'padding-top:14px' }, h('button', { class: 'primary', type: 'button', style: 'width:100%', onclick: go }, 'Find audiobooks')));
+}
+function cleanTitle(t) { return (t || '').replace(/\s*[:(\[–—-]\s.*$/, '').replace(/\s*\((unabridged|abridged)\)/i, '').trim(); }
+async function bookRating(b) {
+  const key = b.id; const cache = S.get('olr', {});
+  if (cache[key] && Date.now() - cache[key].at < 30 * 864e5) return cache[key];
+  const author = (b.authors && b.authors[0] && b.authors[0].name) || '';
+  const url = 'https://openlibrary.org/search.json?title=' + enc(cleanTitle(b.name)) + (author ? '&author=' + enc(author) : '') +
+    '&fields=ratings_average,ratings_count,first_publish_year,key&limit=3';
+  const r = await fetch(url).then(x => x.ok ? x.json() : null).catch(() => null);
+  if (!r) return null; // network or CORS problem: show "no rating" rather than fail
+  const docs = (r.docs || []).filter(d => d.ratings_count);
+  docs.sort((a, b2) => (b2.ratings_count || 0) - (a.ratings_count || 0));
+  const d = docs[0];
+  const out = { at: Date.now(), avg: d ? d.ratings_average : null, count: d ? d.ratings_count : 0, year: d ? d.first_publish_year : null, ol: d && d.key ? 'https://openlibrary.org' + d.key : null };
+  cache[key] = out; S.set('olr', cache);
+  return out;
+}
+/* Ranks by a confidence-weighted rating, so 4.9 from 3 people does not beat 4.4 from 2,000. */
+function bookScore(r) { if (!r || !r.avg) return 0; const m = 25, C = 3.7; return (r.count * r.avg + m * C) / (r.count + m); }
+async function findBooks(box, st) {
+  const status = h('div', { class: 'empty', text: 'Searching Spotify audiobooks…' });
+  box.replaceChildren(status);
+  try {
+    const topic = BOOK_TOPICS.find(x => x[0] === st.topic);
+    const q = [st.q, topic ? topic[2] : ''].filter(Boolean).join(' ').trim() || 'bestseller';
+    const pages = await Promise.all([0, 10, 20, 30].map(off => api('/search?q=' + enc(q) + '&type=audiobook&limit=10&offset=' + off).catch(() => null)));
+    const seen = new Set(), books = [];
+    pages.forEach((r, pi) => ((r && r.audiobooks && r.audiobooks.items) || []).filter(Boolean).forEach((b, i) => {
+      const k = cleanTitle(b.name).toLowerCase() + '|' + artistNames(b.authors).toLowerCase();
+      if (seen.has(k)) return; seen.add(k); books.push({ b, rank: pi * 10 + i });
+    }));
+    if (!books.length) { box.replaceChildren(h('div', { class: 'empty', text: 'No audiobooks found for "' + q + '". Try fewer words or another topic.' }), backToFinder(box, st)); return; }
+    let n = 0;
+    await pool(books, 4, async x => { x.r = await bookRating(x.b); n++; status.textContent = 'Checking ratings… ' + n + ' of ' + books.length; });
+    const rated = books.filter(x => x.r && x.r.avg);
+    let list = books.filter(x => !st.min || (x.r && x.r.avg >= st.min && x.r.count >= 5));
+    if (st.sort === 'best') list.sort((a, b) => bookScore(b.r) - bookScore(a.r));
+    else if (st.sort === 'most') list.sort((a, b) => ((b.r && b.r.count) || 0) - ((a.r && a.r.count) || 0));
+    else list.sort((a, b) => a.rank - b.rank);
+    box.replaceChildren(
+      h('div', { class: 'bar' }, h('small', { text: list.length + ' of ' + books.length + ' audiobooks' + (st.min ? ' rated ' + st.min + '+' : '') + ' · ' + rated.length + ' had ratings' }), backToFinder(box, st)));
+    if (!list.length) box.append(h('div', { class: 'empty', text: 'None of these met the rating filter. Try a lower minimum rating, or "Any".' }));
+    const l = h('div', { class: 'list' });
+    for (const { b, r } of list) l.append(bookRow(b, r));
+    box.append(l, h('div', { class: 'hint', text: 'Ratings come from Open Library readers, matched by title and author, so they rate the book rather than the narration, and a few may match the wrong edition. Spotify does not share its own ratings with apps.' }));
+  } catch (e) { if (handleAuthError(e)) return; box.replaceChildren(h('div', { class: 'err', text: friendly(e) }), backToFinder(box, st)); }
+}
+function backToFinder(box, st) { return h('button', { class: 'ghost', type: 'button', onclick: () => { box.replaceChildren(); paintBookFinder(box, st); } }, 'Change search'); }
+function stars(r) { return r && r.avg ? '★ ' + r.avg.toFixed(1) + ' (' + r.count.toLocaleString('en-GB') + ')' : 'No rating yet'; }
+function bookRow(b, r) {
+  const narr = (b.narrators || []).map(x => x.name).slice(0, 2).join(', ');
+  return row({ img: b.images, kicker: artistNames(b.authors), title: b.name, onOpen: () => openBook(b, r),
+    sub: [subLine(h('span', { class: r && r.avg >= 4 ? 'pill new' : 'pill done', text: stars(r) }), b.total_chapters ? b.total_chapters + ' chapters' : null),
+      narr ? subLine('Read by ' + narr) : null],
+    extra: [hasScope('user-library-modify') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Save ' + b.name + ' to your library', html: ICON.plus, onclick: () => saveBook(b) }) : null],
+    onPlay: () => play({ context_uri: b.uri }, b.name, null, b.external_urls && b.external_urls.spotify) });
+}
+async function saveBook(b) {
+  try { await api('/me/library?uris=' + enc(b.uri), { method: 'PUT' }); toast('Saved ' + cleanTitle(b.name) + ' to your audiobooks'); delete state.lib.books; }
+  catch (e) { toast(friendly(e)); }
+}
+function openBook(b, r) {
+  openSheet(cleanTitle(b.name), async box => {
+    const full = await api('/audiobooks/' + b.id).catch(() => b);
+    const rating = r || await bookRating(full).catch(() => null);
+    const narr = (full.narrators || []).map(x => x.name).join(', ');
+    box.append(h('div', { class: 'row', style: 'border:0' }, art(full.images),
+      h('div', { class: 'meta' }, h('div', { class: 'kicker', text: artistNames(full.authors) }), h('div', { class: 'title', text: full.name }),
+        subLine(h('span', { class: 'pill ' + (rating && rating.avg >= 4 ? 'new' : 'done'), text: stars(rating) }), full.edition || null, rating && rating.year ? 'First published ' + rating.year : null),
+        narr ? subLine('Read by ' + narr) : null),
+      h('div', { class: 'actions' }, h('button', { class: 'play', type: 'button', 'aria-label': 'Play ' + full.name, html: ICON.play, onclick: () => play({ context_uri: full.uri }, full.name) }))));
+    if (full.description) box.append(h('p', { style: 'color:var(--muted);font-size:14px;line-height:1.5;margin:4px 0 8px;max-width:65ch', text: full.description.length > 900 ? full.description.slice(0, 900) + '…' : full.description }));
+    box.append(h('div', { class: 'actions', style: 'gap:8px;flex-wrap:wrap' },
+      hasScope('user-library-modify') ? h('button', { class: 'ghost', type: 'button', onclick: () => saveBook(full) }, 'Save to library') : null,
+      rating && rating.ol ? h('a', { class: 'ghost', href: rating.ol, target: '_blank', rel: 'noopener' }, 'Reviews on Open Library') : null,
+      full.external_urls && full.external_urls.spotify ? h('a', { class: 'ghost', href: full.external_urls.spotify, target: '_blank', rel: 'noopener' }, 'Open in Spotify') : null));
+    const ch = ((full.chapters && full.chapters.items) || []).filter(Boolean);
+    if (ch.length) {
+      box.append(h('div', { class: 'section', text: 'Chapters' }));
+      const l = h('div', { class: 'list' });
+      ch.slice(0, 50).forEach((c, i) => l.append(row({ kicker: 'Chapter ' + (i + 1), title: c.name, sub: [subLine(fmtDur(c.duration_ms), c.is_playable === false ? 'Not playable' : null)],
+        onPlay: c.is_playable === false ? null : () => play({ context_uri: full.uri, offset: { position: i } }, c.name) })));
+      box.append(l);
+    }
+  });
 }
 
 /* ---------- playlist builder (five questions, about one hour) ---------- */
