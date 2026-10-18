@@ -186,6 +186,7 @@ footer small { color: var(--muted); text-align: center; }
       <button class="icon qclear" id="qclear" type="button" aria-label="Clear search" hidden><svg viewBox="0 0 24 24"><path d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg></button>
     </div>
     <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="hist" type="button">History</button>
       <button class="tab" role="tab" data-tab="pods" type="button">Podcasts</button>
       <button class="tab" role="tab" data-tab="lists" type="button">Playlists</button>
       <button class="tab" role="tab" data-tab="lib" type="button">Library</button>
@@ -791,19 +792,13 @@ async function runRoutine(r) {
 }
 
 /* ---------- library ---------- */
-const LIB_VIEWS = [['liked', 'Liked songs'], ['releases', 'New releases'], ['episodes', 'Saved episodes'], ['books', 'Audiobooks'], ['marks', 'Bookmarks'], ['top', 'Your top'], ['history', 'History']];
+const LIB_VIEWS = [['liked', 'Liked songs'], ['releases', 'New releases'], ['episodes', 'Saved episodes'], ['books', 'Audiobooks'], ['marks', 'Bookmarks'], ['top', 'Your top']];
 function renderLib(main) {
   main.append(h('div', { class: 'chips' }, ...LIB_VIEWS.map(([k, label]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(state.libView === k),
     onclick: () => { state.libView = k; S.set('libView', k); render(); loadLibView(); } }, label))));
   const v = state.libView;
   if (v === 'liked') return renderLiked(main);
   if (v === 'marks') return renderMarks(main);
-  if (v === 'history') {
-    const hv = S.get('histView', 'pods');
-    main.append(h('div', { class: 'chips' }, ...[['pods', 'Podcasts'], ['songs', 'Songs']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(hv === k),
-      onclick: () => { S.set('histView', k); render(); if (k === 'songs') loadLibView(); } }, l))));
-    if (hv === 'pods') return renderPodHist(main);
-  }
   if (v === 'releases') return renderReleases(main);
   const key = v === 'top' ? 'top:' + state.topRange : v;
   if (v === 'top') main.append(h('div', { class: 'chips' }, ...[['short_term', 'Last 4 weeks'], ['medium_term', 'Last 6 months'], ['long_term', 'All time']]
@@ -1811,6 +1806,7 @@ function render() {
   if (searching) renderSearch(main);
   else if (state.tab === 'pods') renderPods(main);
   else if (state.tab === 'lists') renderLists(main);
+  else if (state.tab === 'hist') renderHistory(main);
   else renderLib(main);
   const sp = S.get('savePl');
   main.append(h('footer', {},
@@ -1820,7 +1816,33 @@ function render() {
       h('button', { class: 'linkish', type: 'button', onclick: () => { S.del('tokens'); renderSetup(); } }, 'Change Client ID'))));
   if (focusId) { const s = $(focusId); if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); } }
 }
-function loadTab() { if (state.tab === 'pods') loadShows(); else if (state.tab === 'lists') loadLists(); else loadLibView(); }
+function loadTab() {
+  if (state.tab === 'pods') loadShows(); else if (state.tab === 'lists') loadLists();
+  else if (state.tab === 'hist') { if (S.get('histView', 'pods') === 'songs') loadHistSongs(); else loadShows(); }
+  else loadLibView();
+}
+function renderHistory(main) {
+  const hv = S.get('histView', 'pods');
+  main.append(h('div', { class: 'chips' }, ...[['pods', 'Podcasts'], ['songs', 'Songs']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(hv === k),
+    onclick: () => { S.set('histView', k); render(); loadTab(); } }, l))));
+  if (hv === 'pods') return renderPodHist(main);
+  const data = state.lib.history;
+  main.append(h('div', { class: 'bar' }, h('small', { text: state.libLoading.history ? 'Loading…' : '' }),
+    h('button', { class: 'ghost', type: 'button', onclick: () => loadHistSongs(true), disabled: state.libLoading.history || null }, 'Refresh')));
+  if (state.libErr.history && !data) { main.append(errorBox(state.libErr.history)); return; }
+  if (!data) { main.append(h('div', { class: 'empty', text: 'Loading…' })); return; }
+  const list = h('div', { class: 'list' });
+  if (!data.length) list.append(h('div', { class: 'empty', text: 'Nothing played recently.' }));
+  data.forEach(it => list.append(trackRow(it.track, () => play({ uris: [it.track.uri] }, it.track.name), timeAgo(it.played_at))));
+  main.append(list, h('div', { class: 'hint', text: 'Spotify only shares your last 50 songs here.' }));
+}
+async function loadHistSongs(force) {
+  if ((state.lib.history && !force) || state.libLoading.history) return;
+  state.libLoading.history = true; state.libErr.history = null; render();
+  try { state.lib.history = ((await api('/me/player/recently-played?limit=50')).items || []).filter(it => it && it.track); }
+  catch (e) { if (handleAuthError(e)) return; e.message = friendly(e); state.libErr.history = e; }
+  state.libLoading.history = false; render();
+}
 function switchTab(t) {
   if (state.q) { state.q = ''; $('q').value = ''; $('qclear').hidden = true; state.search = null; }
   state.tab = t; S.set('tab', t); render(); loadTab();
@@ -1871,7 +1893,8 @@ async function boot() {
     try { await handleCallback(params); } catch (e) { renderSetup(e.message); return; }
   }
   if (!S.get('clientId') || !S.get('tokens')) { renderSetup(); return; }
-  state.tab = 'lib'; state.libView = 'history';
+  state.tab = 'hist';
+  if (state.libView === 'history') state.libView = 'liked';
   render(); loadTab();
   if (state.tab !== 'pods') loadShows(); // shows feed routines, search and the New inbox
   if (state.tab !== 'lists') loadLists();
