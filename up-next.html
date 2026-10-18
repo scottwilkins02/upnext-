@@ -110,6 +110,8 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom, 0px));
   background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 10px; font-size: 14px; z-index: 9; max-width: calc(100vw - 32px); }
+.banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 14px; }
+.banner span { flex: 1 1 240px; min-width: 0; }
 footer { padding-block: 30px; display: flex; gap: 16px; justify-content: center; }
 @media (prefers-reduced-motion: no-preference) { .play:active, .icon:active { transform: scale(.94); } }
 </style>
@@ -155,6 +157,7 @@ footer { padding-block: 30px; display: flex; gap: 16px; justify-content: center;
     <span class="actions">
       <button class="ghost" id="stuckClose" type="button">Close</button>
       <button class="ghost" id="stuckRetry" type="button">Try again</button>
+      <button class="ghost" id="stuckLocal" type="button">Play in Up Next</button>
     </span>
   </div>
 </dialog>
@@ -171,7 +174,8 @@ const S = {
 const API = 'https://api.spotify.com/v1';
 const AUTH = 'https://accounts.spotify.com';
 const SCOPES = ['user-library-read', 'user-read-playback-position', 'playlist-read-private', 'playlist-read-collaborative',
-  'user-read-playback-state', 'user-modify-playback-state', 'user-read-recently-played'].join(' ');
+  'user-read-playback-state', 'user-modify-playback-state', 'user-read-recently-played',
+  'streaming', 'user-read-email', 'user-read-private'].join(' ');
 const REDIRECT = location.origin + location.pathname;
 const FRESH_MS = 10 * 60 * 1000;
 const $ = id => document.getElementById(id);
@@ -213,7 +217,7 @@ async function login() {
 }
 function saveTokens(j) {
   const old = S.get('tokens') || {};
-  S.set('tokens', { access: j.access_token, refresh: j.refresh_token || old.refresh, expires: Date.now() + (j.expires_in - 60) * 1000 });
+  S.set('tokens', { access: j.access_token, refresh: j.refresh_token || old.refresh, scope: j.scope || old.scope || '', expires: Date.now() + (j.expires_in - 60) * 1000 });
 }
 async function tokenRequest(params) {
   const r = await fetch(AUTH + '/api/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -466,12 +470,58 @@ function listRow(p) {
 
 /* ---------- playback ---------- */
 let pendingPlay = null;
-/* Spotify can accept a play command (no error) yet nothing plays, most often when the target
-   device is asleep in the background. So we pick an explicit device, then check it really started. */
+
+/* Local player: Up Next itself becomes a Spotify device via the Web Playback SDK, so the iPad
+   no longer depends on the Spotify app staying awake. iOS only allows audio to start from a tap,
+   so the player is created and activated synchronously inside tap handlers. */
+let sdkLoaded = false, player = null, localReady = null, localId = null;
+window.onSpotifyWebPlaybackSDKReady = () => { sdkLoaded = true; };
+const UA = navigator.userAgent;
+const LOCAL_LABEL = /iPhone/.test(UA) ? 'This iPhone' : (/iPad/.test(UA) || (/Macintosh/.test(UA) && 'ontouchend' in document)) ? 'This iPad' : 'This browser';
+const LOCAL_NAME = 'Up Next (' + LOCAL_LABEL.replace('This ', '') + ')';
+function hasStreamingScope() { const t = S.get('tokens'); return !!(t && t.scope && t.scope.split(' ').includes('streaming')); }
+function target() { return S.get('target', 'local'); }
+function localWanted() { return target() === 'local' && hasStreamingScope(); }
+function isLocalDevice(dev) { return !!dev && (dev.id === localId || dev.name === LOCAL_NAME); }
+
+function ensureLocal() { // call synchronously from a tap, before any await
+  if (!sdkLoaded || !window.Spotify) return Promise.reject(new Error('The built-in player is still loading. Try again in a moment.'));
+  if (!player) {
+    const p = new window.Spotify.Player({ name: LOCAL_NAME, volume: 0.9,
+      getOAuthToken: cb => { accessToken().then(cb, () => cb('')); } });
+    player = p;
+    localReady = new Promise((res, rej) => {
+      p.addListener('ready', ({ device_id }) => { localId = device_id; res(device_id); });
+      p.addListener('initialization_error', ({ message }) => rej(new Error('This browser cannot play Spotify here: ' + message)));
+      p.addListener('authentication_error', () => rej(new Error('Reconnect Spotify so Up Next can play here.')));
+      p.addListener('account_error', () => rej(new Error('Playing inside Up Next needs a full Spotify Premium plan.')));
+      setTimeout(() => rej(new Error('The built-in player did not start. Check your connection and try again.')), 12000);
+    }).catch(e => { try { p.disconnect(); } catch {} if (player === p) { player = null; localReady = null; localId = null; } throw e; });
+    p.addListener('not_ready', () => { localId = null; });
+    p.addListener('playback_error', ({ message }) => toast('Playback error: ' + message, 5000));
+    p.addListener('autoplay_failed', () => toast('iOS blocked the start. Tap play in the bar below.', 6000));
+    p.addListener('player_state_changed', s => paintLocal(s));
+    p.connect();
+  }
+  try { player.activateElement(); } catch {}
+  return localReady;
+}
+function paintLocal(s) {
+  if (!s) return;
+  const t = s.track_window && s.track_window.current_track;
+  state.player = { is_playing: !s.paused, device: { id: localId, name: LOCAL_NAME },
+    item: t ? { uri: t.uri, name: t.name, type: t.type, artists: t.artists, show: t.type === 'episode' ? { name: (t.artists || []).map(a => a.name).join(', ') } : null } : null,
+    context: s.context && s.context.uri ? { uri: s.context.uri } : null };
+  paintPlayer();
+}
+
+/* Remote devices: Spotify can accept a play command yet nothing plays when the target app is asleep,
+   so pick an explicit device and check it really started. */
 async function pickDevice() {
   const r = await api('/me/player/devices');
-  const devs = ((r && r.devices) || []).filter(d => !d.is_restricted);
-  return devs.find(d => d.is_active) || devs.find(d => d.id === S.get('device')) || (devs.length === 1 ? devs[0] : null);
+  const devs = ((r && r.devices) || []).filter(d => !d.is_restricted && !isLocalDevice(d));
+  const t = target();
+  return devs.find(d => d.id === t) || devs.find(d => d.is_active) || (devs.length === 1 ? devs[0] : null);
 }
 async function isPlaying(body) {
   const p = await api('/me/player?additional_types=episode');
@@ -481,32 +531,46 @@ async function isPlaying(body) {
   if (body.context_uri) return !p.context || p.context.uri === body.context_uri;
   return true;
 }
-async function play(body, name, deviceId, url) {
-  const item = { body, name, url };
+function play(body, name, deviceId, url) {
+  // Synchronous first step so iOS counts the tap as permission to play audio.
+  const useLocal = deviceId === 'local' || (!deviceId && localWanted());
+  let localP = null;
+  if (useLocal) localP = ensureLocal();
+  return playAsync({ body, name, url }, useLocal ? null : deviceId, localP);
+}
+async function playAsync(item, deviceId, localP) {
+  const { body, name } = item;
+  const playOn = id => api('/me/player/play?device_id=' + encodeURIComponent(id), { method: 'PUT', body });
   try {
-    toast('Starting ' + (name || '') + '…', 6000);
-    let dev = deviceId ? { id: deviceId } : await pickDevice();
+    toast('Starting ' + (name || '') + '…', 8000);
+    if (localP) {
+      const id = await localP;
+      await playOn(id);
+      await sleep(1500);
+      const s = await player.getCurrentState().catch(() => null);
+      if (s && !s.paused) { pendingPlay = null; toast('Playing ' + (name || '')); }
+      else { paintLocal(s); toast('Ready. Tap play in the bar below to start.', 6000); }
+      return;
+    }
+    const dev = deviceId ? { id: deviceId } : await pickDevice();
     if (!dev) { pendingPlay = item; $('toast').hidden = true; openDevices(); return; }
-    const playOn = id => api('/me/player/play?device_id=' + encodeURIComponent(id), { method: 'PUT', body });
     await playOn(dev.id);
     await sleep(1500);
     if (!(await isPlaying(body))) {
-      // Second attempt: wake the device by transferring playback to it, then play again.
       await api('/me/player', { method: 'PUT', body: { device_ids: [dev.id], play: true } }).catch(() => {});
       await sleep(1200);
       await playOn(dev.id);
       await sleep(1800);
       if (!(await isPlaying(body))) { $('toast').hidden = true; showStuck(item); return; }
     }
-    S.set('device', dev.id);
     pendingPlay = null;
     toast('Playing ' + (name || ''));
   } catch (e) {
     $('toast').hidden = true;
     if (handleAuthError(e)) return;
-    if (e.status === 404 || e.reason === 'NO_ACTIVE_DEVICE') { pendingPlay = item; S.del('device'); openDevices(); return; }
+    if (!localP && (e.status === 404 || e.reason === 'NO_ACTIVE_DEVICE')) { pendingPlay = item; openDevices(); return; }
     if (e.status === 403) { toast(e.reason === 'PREMIUM_REQUIRED' ? 'Playback control needs Spotify Premium.' : 'Spotify refused: ' + e.message, 5000); return; }
-    toast('Could not start playback: ' + e.message, 5000);
+    toast((localP ? '' : 'Could not start playback: ') + e.message, 6000);
   }
 }
 function showStuck(item) {
@@ -514,25 +578,41 @@ function showStuck(item) {
   $('stuckOpen').hidden = !item.url;
   if (item.url) $('stuckOpen').href = item.url;
   $('stuckRetry').onclick = () => { d.close(); play(item.body, item.name, null, item.url); };
+  $('stuckLocal').hidden = !hasStreamingScope();
+  $('stuckLocal').onclick = () => { d.close(); S.set('target', 'local'); play(item.body, item.name, 'local', item.url); };
   d.showModal();
+}
+function deviceButton(label, sub, onclick, disabled) {
+  return h('button', { class: 'dev', type: 'button', disabled: disabled || null, onclick }, h('b', { text: label }), h('small', { text: sub }));
 }
 async function openDevices() {
   const d = $('devDialog'); if (!d.open) d.showModal();
   const list = $('devList'); list.replaceChildren(h('div', { class: 'sub', text: 'Looking for devices…' }));
+  const localBtn = hasStreamingScope()
+    ? deviceButton(LOCAL_LABEL + ' (Up Next plays it)', 'Most reliable here. No Spotify app needed' + (target() === 'local' ? ' · selected' : ''), () => {
+        d.close(); S.set('target', 'local');
+        if (pendingPlay) { const p = pendingPlay; play(p.body, p.name, 'local', p.url); return; }
+        const lp = ensureLocal();
+        lp.then(id => api('/me/player', { method: 'PUT', body: { device_ids: [id], play: false } }))
+          .then(() => toast('Switched to ' + LOCAL_LABEL.toLowerCase()), e => toast(e.message, 6000));
+      })
+    : deviceButton(LOCAL_LABEL + ' (Up Next plays it)', 'Reconnect Spotify first to allow this', () => login());
   try {
     const r = await api('/me/player/devices');
-    const devs = (r && r.devices) || [];
-    list.replaceChildren();
-    $('devHint').textContent = devs.length ? 'Pick a device. Spotify needs to be open on it.' : 'No devices found. Open Spotify on your phone, computer or speaker, then tap Refresh.';
-    for (const dv of devs) list.append(h('button', { class: 'dev', type: 'button', disabled: dv.is_restricted || null,
-      onclick: async () => {
-        d.close();
-        S.set('device', dv.id);
-        if (pendingPlay) await play(pendingPlay.body, pendingPlay.name, dv.id, pendingPlay.url);
-        else { try { await api('/me/player', { method: 'PUT', body: { device_ids: [dv.id], play: false } }); toast('Switched to ' + dv.name); setTimeout(refreshPlayer, 900); } catch (e) { toast('Could not switch: ' + e.message); } }
-      } }, h('b', { text: dv.name }), h('small', { text: dv.type + (dv.is_active ? ' · active now' : '') + (dv.is_restricted ? ' · cannot be controlled' : '') })));
-  } catch (e) { if (handleAuthError(e)) return; list.replaceChildren(h('div', { class: 'err', text: e.message })); }
+    const devs = ((r && r.devices) || []).filter(dv => !isLocalDevice(dv));
+    list.replaceChildren(localBtn);
+    $('devHint').textContent = devs.length ? 'Or control Spotify on another device. Spotify needs to be open on it.' : 'Other devices appear here when Spotify is open on them.';
+    for (const dv of devs) list.append(deviceButton(dv.name,
+      dv.type + (dv.is_active ? ' · active now' : '') + (dv.is_restricted ? ' · cannot be controlled' : '') + (target() === dv.id ? ' · selected' : ''),
+      async () => {
+        d.close(); S.set('target', dv.id);
+        if (pendingPlay) { const p = pendingPlay; await play(p.body, p.name, dv.id, p.url); return; }
+        try { await api('/me/player', { method: 'PUT', body: { device_ids: [dv.id], play: false } }); toast('Switched to ' + dv.name); setTimeout(refreshPlayer, 900); }
+        catch (e) { toast('Could not switch: ' + e.message); }
+      }, dv.is_restricted));
+  } catch (e) { if (handleAuthError(e)) return; list.replaceChildren(localBtn, h('div', { class: 'err', text: e.message })); }
 }
+function localActive() { return !!player && state.player && isLocalDevice(state.player.device); }
 async function refreshPlayer() {
   if (document.hidden || !S.get('tokens')) return;
   try {
@@ -542,7 +622,7 @@ async function refreshPlayer() {
 }
 function paintPlayer() {
   const p = state.player, now = $('now');
-  $('deviceName').textContent = (p && p.device && p.device.name) || 'choose device';
+  $('deviceName').textContent = p && p.device && p.device.name ? (isLocalDevice(p.device) ? LOCAL_LABEL : p.device.name) : (localWanted() ? LOCAL_LABEL : 'choose device');
   if (!p || !p.item) { now.hidden = true; return; }
   now.hidden = false;
   const it = p.item;
@@ -607,6 +687,9 @@ function render() {
   const main = $('main');
   const focusSearch = document.activeElement && document.activeElement.id === 'listSearch';
   main.replaceChildren();
+  if (!hasStreamingScope()) main.append(h('div', { class: 'banner' },
+    h('span', { text: 'New: Up Next can now play on ' + LOCAL_LABEL.replace('This ', 'this ') + ' itself, without waking the Spotify app. Reconnect once to allow it.' }),
+    h('button', { class: 'ghost', type: 'button', onclick: () => login() }, 'Reconnect')));
   state.tab === 'pods' ? renderPods(main) : renderLists(main);
   main.append(h('footer', {},
     h('button', { class: 'linkish', type: 'button', onclick: () => { S.del('tokens'); S.del('showsCache'); S.del('listsCache'); location.reload(); } }, 'Sign out'),
@@ -625,8 +708,14 @@ async function boot() {
   $('devRefresh').addEventListener('click', openDevices);
   $('stuckClose').addEventListener('click', () => $('stuckDialog').close());
   $('devClose').addEventListener('click', () => { pendingPlay = null; $('devDialog').close(); });
-  $('nowToggle').addEventListener('click', () => playerCmd(state.player && state.player.is_playing ? '/me/player/pause' : '/me/player/play', 'PUT'));
-  $('nowNext').addEventListener('click', () => playerCmd('/me/player/next', 'POST'));
+  $('nowToggle').addEventListener('click', () => {
+    if (localActive()) { try { player.activateElement(); } catch {} player.togglePlay(); return; }
+    playerCmd(state.player && state.player.is_playing ? '/me/player/pause' : '/me/player/play', 'PUT');
+  });
+  $('nowNext').addEventListener('click', () => {
+    if (localActive()) { player.nextTrack(); return; }
+    playerCmd('/me/player/next', 'POST');
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || !S.get('tokens')) return;
     refreshPlayer();
@@ -645,5 +734,6 @@ async function boot() {
 }
 boot();
 </script>
+<script src="https://sdk.scdn.co/spotify-player.js"></script>
 </body>
 </html>
