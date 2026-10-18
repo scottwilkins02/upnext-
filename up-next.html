@@ -157,17 +157,6 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
 .carbtns svg { width: 54px; height: 54px; fill: currentColor; }
 .carnext { margin-top: 14px; min-height: 84px; width: 100%; font-size: 22px; }
 .carstatus { text-align: center; color: var(--muted); font-size: 13px; padding-top: 10px; }
-.heat { display: grid; grid-template-columns: 30px repeat(24, minmax(0, 1fr)); gap: 2px; margin-top: 10px; }
-.heat .lab { font-size: 10.5px; color: var(--muted); line-height: 1; align-self: center; }
-.heat .hr { font-size: 10px; color: var(--muted); grid-row: 8; }
-.heat .c { aspect-ratio: 1; border-radius: 3px; border: 0; padding: 0; min-width: 0; }
-.heat .c, .legend .c { background: var(--line); }
-.c.l1 { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
-.c.l2 { background: color-mix(in srgb, var(--accent) 55%, var(--surface)); }
-.c.l3 { background: color-mix(in srgb, var(--accent) 78%, var(--surface)); }
-.c.l4 { background: var(--accent); }
-.legend { display: flex; align-items: center; gap: 4px; justify-content: flex-end; font-size: 11px; color: var(--muted); padding-top: 6px; }
-.legend .c { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; padding-block: 12px 4px; }
 .stats div { font-size: 13px; color: var(--muted); }
 .stats b { display: block; color: var(--ink); font-size: 15px; }
@@ -826,7 +815,7 @@ function renderLib(main) {
     main.append(al);
     return;
   } else if (v === 'history') {
-    renderHeatmap(main);
+    renderHistoryStats(main);
     main.append(h('div', { class: 'section', text: 'Recently played songs' }));
     if (!data.length) list.append(h('div', { class: 'empty', text: 'Nothing played recently.' }));
     data.forEach(it => list.append(trackRow(it.track, () => play({ uris: [it.track.uri] }, it.track.name), timeAgo(it.played_at))));
@@ -1529,28 +1518,15 @@ async function histMergeRecent() {
 }
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 function hourLabel(hr) { return hr === 0 ? '12am' : hr < 12 ? hr + 'am' : hr === 12 ? '12pm' : (hr - 12) + 'pm'; }
-function renderHeatmap(main) {
+function renderHistoryStats(main) {
   const hist = S.get('hist', []);
   const since = Date.now() - 84 * 864e5;
   const recent = hist.filter(x => x.t >= since);
   const grid = Array.from({ length: 7 }, () => new Array(24).fill(0));
   for (const x of recent) { const d = new Date(x.t); grid[(d.getDay() + 6) % 7][d.getHours()]++; }
   const max = Math.max(0, ...grid.flat());
-  main.append(h('div', { class: 'section', text: 'When you listen · last 12 weeks' }));
+  main.append(h('div', { class: 'section', text: 'Your listening log · last 12 weeks' }));
   if (!recent.length) { main.append(h('div', { class: 'hint', text: 'Nothing recorded yet. Up Next logs what plays while it is open, and copies your last 50 songs from Spotify each visit.' })); return; }
-  const level = c => c === 0 ? '' : max <= 1 ? ' l4' : ' l' + Math.min(4, Math.ceil((c / max) * 4));
-  const box = h('div', { class: 'heat', role: 'img', 'aria-label': 'Plays by weekday and hour over the last 12 weeks' });
-  grid.forEach((rowArr, di) => {
-    box.append(h('span', { class: 'lab', text: DAYS[di], style: 'grid-row:' + (di + 1) + ';grid-column:1' }));
-    rowArr.forEach((c, hr) => {
-      const label = DAYS[di] + ' ' + hourLabel(hr) + ' to ' + hourLabel((hr + 1) % 24) + ': ' + c + ' play' + (c === 1 ? '' : 's');
-      box.append(h('button', { class: 'c' + level(c), type: 'button', title: label, 'aria-label': label, style: 'grid-row:' + (di + 1) + ';grid-column:' + (hr + 2), onclick: () => toast(label) }));
-    });
-  });
-  for (const hr of [0, 6, 12, 18]) box.append(h('span', { class: 'hr', text: hourLabel(hr), style: 'grid-column:' + (hr + 2) + ' / span 4' }));
-  main.append(box);
-  main.append(h('div', { class: 'legend' }, 'Fewer', ...['', ' l1', ' l2', ' l3', ' l4'].map(l => h('span', { class: 'c' + l, style: 'width:12px;height:12px;aspect-ratio:auto' })), 'More'));
-  // headline numbers and a plain-text reading of the chart
   let bd = 0, bh = 0; grid.forEach((r, d) => r.forEach((c, hr) => { if (c > grid[bd][bh]) { bd = d; bh = hr; } }));
   const counts = {}; for (const x of recent) if (x.b) counts[x.b] = (counts[x.b] || 0) + 1;
   const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
