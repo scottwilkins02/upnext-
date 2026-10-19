@@ -188,6 +188,7 @@ button:active { opacity: .78; }
 .menu .mi.confirm::after { content: none; }
 .menu .mi.done { color: var(--new); }
 @media (max-width: 600px) {
+  .tab { font-size: 13.5px; }
   .row { grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; }
   .row img, .row .ph { width: 48px; height: 48px; }
   .title { -webkit-line-clamp: 3; }
@@ -213,6 +214,7 @@ button[aria-busy="true"] { opacity: .5; pointer-events: none; }
       <button class="icon qclear" id="qclear" type="button" aria-label="Clear search" hidden><svg viewBox="0 0 24 24"><path d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg></button>
     </div>
     <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="now" type="button">Now</button>
       <button class="tab" role="tab" data-tab="hist" type="button">History</button>
       <button class="tab" role="tab" data-tab="pods" type="button">Podcasts</button>
       <button class="tab" role="tab" data-tab="lists" type="button">Playlists</button>
@@ -346,6 +348,9 @@ const ICON = {
   shuffle: '<svg viewBox="0 0 24 24"><path d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4zm.3 9.4l-1.4 1.4 3.1 3.1-2 2H20v-5.5l-2 2z"/></svg>',
   close: '<svg viewBox="0 0 24 24"><path d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg>',
   more: '<svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>',
+  pq: '<svg viewBox="0 0 24 24"><path d="M3 5h12v2H3zm0 4h12v2H3zm0 4h7v2H3zm13-1h2v3h3v2h-3v3h-2v-3h-3v-2h3z"/></svg>',
+  up: '<svg viewBox="0 0 24 24"><path d="M7.4 15.4L12 10.8l4.6 4.6L18 14l-6-6-6 6z"/></svg>',
+  down: '<svg viewBox="0 0 24 24"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>',
   bolt: '<svg viewBox="0 0 24 24"><path d="M11 21h-1l1-7H7.5c-.6 0-.6-.3-.4-.7L13 3h1l-1 7h3.5c.5 0 .6.3.4.7z"/></svg>',
   plus: '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>'
 };
@@ -697,7 +702,8 @@ function episodeRow(e, showName, images, extra) {
   return row({ img: images || e.images, kicker: showName, title: e.name,
     sub: [subLine(started ? h('span', { class: 'pill resume', text: 'Resume' }) : rp.fully_played ? h('span', { class: 'pill done', text: 'Played' }) : null,
       fmtDate(e.release_date) + ' · ' + (started ? fmtDur(e.duration_ms - rp.resume_position_ms) + ' left' : fmtDur(e.duration_ms)))],
-    extra, onQueue: () => queueUri(e.uri, e.name), onPlay: () => play(epBody(e), e.name, null, e.url || (e.external_urls && e.external_urls.spotify)) });
+    extra: [pqAddBtn({ id: e.id, uri: e.uri, name: e.name, show: showName || (e.show && e.show.name) || '', dur: e.duration_ms, img: smallImg(images || e.images) }), ...(extra || [])],
+    onQueue: () => queueUri(e.uri, e.name), onPlay: () => play(epBody(e), e.name, null, e.url || (e.external_urls && e.external_urls.spotify)) });
 }
 function showRow(s, mode, pick) {
   const ep = pick.ep, rp = ep.resume_point || {};
@@ -712,7 +718,7 @@ function showRow(s, mode, pick) {
           mode === 'order' ? 'In order · switch to newest' : 'Newest · switch to in order'),
         following.length ? h('button', { class: 'linkish', type: 'button', onclick: ev => { ev.stopPropagation(); bingeShow(s, pick, following); } },
           'Play this + next ' + following.length + ' in order') : null)],
-    extra: [removeBtn('Unfollow ' + s.show.name, async () => {
+    extra: [pqAddBtn({ id: ep.id, uri: ep.uri, name: ep.name, show: s.show.name, showId: s.show.id, dur: ep.duration_ms, img: smallImg(s.show.images) }), removeBtn('Unfollow ' + s.show.name, async () => {
       if (!(await libraryRemove(s.show.uri, 'user-library-modify'))) return false;
       state.shows = state.shows.filter(x => x.show.id !== s.show.id); S.set('showsCache', { at: state.showsAt, list: state.shows });
       toast('Unfollowed ' + s.show.name); return true;
@@ -1571,7 +1577,8 @@ function renderMarks(main) {
 /* ---------- auto-play the next new episode ---------- */
 const autoQueued = new Set();
 function onItemChange(it) {
-  if (it.type === 'episode') maybeQueueInbox(it);
+  pqOnItem(it);
+  if (it.type === 'episode' && !S.get('pqOn')) maybeQueueInbox(it);
 }
 
 /* ---------- podcast history (kept on this device) ----------
@@ -1631,7 +1638,7 @@ function renderPodHist(main) {
     l.append(row({ img: sh && sh.show.images, kicker: x.show, title: x.name,
       sub: [subLine(x.done ? h('span', { class: 'pill done', text: 'Finished' }) : h('span', { class: 'pill resume', text: fmtDur(left) + ' left' }), when)],
       onOpen: sh ? () => openShow(sh.show) : null,
-      extra: [removeBtn('Remove ' + x.name + ' from history', () => { S.set('podHist', podHist().filter(y => y.id !== x.id)); return true; })],
+      extra: [x.done ? null : pqAddBtn({ id: x.id, uri: x.uri, name: x.name, show: x.show, showId: x.showId, dur: x.dur, img: sh && smallImg(sh.show.images) }), removeBtn('Remove ' + x.name + ' from history', () => { S.set('podHist', podHist().filter(y => y.id !== x.id)); return true; })],
       onQueue: () => queueUri(x.uri, x.name),
       playLabel: x.done ? 'Play again ' : 'Resume ',
       onPlay: () => play({ uris: [x.uri], position_ms: x.done ? 0 : (x.pos || 0) }, x.name) }));
@@ -2025,6 +2032,118 @@ async function savePlaylist(ctx, btn, andPlay) {
   } catch (e) { btn.disabled = false; btn.textContent = andPlay ? 'Save and play' : 'Save to Spotify'; toast(friendly(e), 6000); }
 }
 
+/* ---------- podcast queue (your own order; Spotify's queue can't be edited by apps) ----------
+   While it runs, the next episode is also placed in Spotify's queue so playback moves on even if Up Next
+   is in the background. When Up Next sees the next episode start, it ticks the finished one off. */
+const pq = () => S.get('pq', []);
+const pqSave = list => S.set('pq', list.slice(0, 100));
+function pqAddBtn(e) {
+  if (!e || !e.uri) return null;
+  const inQ = pq().some(x => x.uri === e.uri);
+  const b = h('button', { class: 'icon' + (inQ ? ' done' : ''), type: 'button', 'aria-label': inQ ? e.name + ' is in your podcast queue' : 'Add ' + e.name + ' to your podcast queue',
+    'data-short': inQ ? 'In podcast queue' : 'Add to podcast queue', html: inQ ? ICON_TICK : ICON.pq, disabled: inQ || null });
+  if (!inQ) b.addEventListener('click', () => feedback(b, () => {
+    const list = pq(); if (!list.some(x => x.uri === e.uri)) list.push({ id: e.id || e.uri.split(':').pop(), uri: e.uri, name: e.name, show: e.show || '', showId: e.showId || null, dur: e.dur || 0, img: e.img || null });
+    pqSave(list); toast('Added to your podcast queue (' + list.length + ')');
+    if (S.get('pqOn') && list.length === 2) pqPrimeNext();
+    if (state.tab === 'now') setTimeout(render, 900);
+    return true;
+  }, { keep: true, doneLabel: 'In your podcast queue' }));
+  return b;
+}
+function pqMove(i, d) { const l = pq(); const j = i + d; if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; pqSave(l); if (S.get('pqOn') && (i <= 1 || j <= 1)) pqPrimeNext(); render(); }
+async function pqPrimeNext() {
+  const l = pq(); const nxt = l[1]; if (!nxt) return;
+  const dev = currentDeviceId();
+  try { await api('/me/player/queue?uri=' + enc(nxt.uri) + (dev ? '&device_id=' + enc(dev) : ''), { method: 'POST' }); S.set('pqPrimed', nxt.uri); } catch {}
+}
+async function pqStart(index = 0) {
+  primeLocal();
+  let l = pq(); if (!l.length) return false;
+  if (index) { l = l.slice(index).concat(l.slice(0, index)); pqSave(l); }
+  const first = l[0];
+  let at = 0;
+  try { const e = await api('/episodes/' + first.id); const rp = e && e.resume_point; if (rp && !rp.fully_played) at = rp.resume_position_ms || 0; } catch {}
+  S.set('pqOn', true); S.del('pqPrimed');
+  const dev = await play({ uris: [first.uri], position_ms: at }, first.name);
+  if (!dev) { S.set('pqOn', false); return false; }
+  await pqPrimeNext();
+  if (state.tab === 'now') render();
+  return true;
+}
+function pqOnItem(it) {
+  if (!S.get('pqOn') || !it) return;
+  const l = pq();
+  if (!l.length) { S.set('pqOn', false); return; }
+  if (it.uri === l[0].uri) return;
+  if (l[1] && it.uri === l[1].uri) {
+    l.shift(); pqSave(l); S.del('pqPrimed');
+    toast('Podcast queue: ' + (l[0].show ? l[0].show + ' · ' : '') + l[0].name, 4500);
+    pqPrimeNext();
+    if (state.tab === 'now') render();
+    return;
+  }
+  S.set('pqOn', false); // something else started, so the queue steps aside until you press Play queue again
+  if (state.tab === 'now') render();
+}
+function pqRow(x, i, n) {
+  return row({ img: x.img, kicker: (i === 0 && S.get('pqOn') ? 'Playing from queue · ' : (i + 1) + '. ') + (x.show || ''), title: x.name,
+    sub: [subLine(x.dur ? fmtDur(x.dur) : null)],
+    extra: [
+      h('button', { class: 'icon', type: 'button', 'aria-label': 'Move ' + x.name + ' up', 'data-short': 'Move up', html: ICON.up, disabled: i === 0 || null, onclick: () => pqMove(i, -1) }),
+      h('button', { class: 'icon', type: 'button', 'aria-label': 'Move ' + x.name + ' down', 'data-short': 'Move down', html: ICON.down, disabled: i === n - 1 || null, onclick: () => pqMove(i, 1) }),
+      removeBtn('Remove ' + x.name + ' from your podcast queue', () => { pqSave(pq().filter(y => y.uri !== x.uri)); if (S.get('pqOn') && i <= 1) pqPrimeNext(); setTimeout(render, 300); return true; })],
+    playLabel: 'Play queue from ', onPlay: () => pqStart(i) });
+}
+
+/* ---------- Now: the screen the app opens on ---------- */
+function nowSection(title, linkText, linkTab) {
+  return h('div', { class: 'section' }, h('span', { text: title }),
+    linkText ? h('button', { class: 'linkish', type: 'button', onclick: () => switchTab(linkTab) }, linkText) : null);
+}
+function renderNow(main) {
+  // 1. pick up where you left off: the newest unfinished episode in your podcast history
+  const p = state.player, playingNow = p && p.is_playing && p.item;
+  const resume = !playingNow && podHist().find(x => !x.done && x.pos > 60000);
+  if (resume) {
+    const sh = (state.shows || []).find(s => s.show.id === resume.showId);
+    main.append(nowSection('Pick up where you left off'), h('div', { class: 'list' }, row({ img: sh && sh.show.images, kicker: resume.show, title: resume.name,
+      sub: [subLine(h('span', { class: 'pill resume', text: fmtDur(Math.max(0, resume.dur - resume.pos)) + ' left' }))],
+      playLabel: 'Resume ', onPlay: () => play({ uris: [resume.uri], position_ms: resume.pos }, resume.name) })));
+  }
+  // 2. your podcast queue
+  const q = pq();
+  main.append(h('div', { class: 'section' }, h('span', { text: 'Podcast queue' + (q.length ? ' · ' + q.length : '') }),
+    q.length ? h('button', { class: 'linkish', type: 'button', onclick: () => { pqSave([]); S.set('pqOn', false); render(); toast('Podcast queue cleared'); } }, 'Clear') : null));
+  if (!q.length) main.append(h('div', { class: 'hint', text: 'Line up episodes in your own order. Tap the list-plus icon (or ⋯ → Add to podcast queue) on any episode, then Play queue. Each one plays after the last.' }));
+  else {
+    const on = S.get('pqOn');
+    main.append(h('div', { class: 'bar', style: 'padding-top:6px' },
+      h('small', { text: on ? 'Playing in your order. Starting anything else pauses the queue.' : fmtDur(q.reduce((a, x) => a + (x.dur || 0), 0)) + ' in total' }),
+      h('button', { class: on ? 'ghost' : 'primary', type: 'button', style: on ? null : 'padding:9px 16px;font-size:14px', onclick: e => busy(e.currentTarget, () => pqStart(0)) }, on ? 'Restart queue' : 'Play queue')));
+    const l = h('div', { class: 'list' }); q.slice(0, 8).forEach((x, i) => l.append(pqRow(x, i, q.length))); main.append(l);
+    if (q.length > 8) main.append(h('div', { class: 'hint', text: '+ ' + (q.length - 8) + ' more in the queue' }));
+  }
+  // 3. next episodes from shows you follow
+  main.append(nowSection('Next episodes', 'All podcasts', 'pods'));
+  if (!state.shows) main.append(h('div', { class: 'hint', text: 'Loading your podcasts…' }));
+  else {
+    const rows = state.shows.map(s => { const mode = S.get('mode:' + s.show.id, 'order'); return { s, mode, pick: pickNext(s.eps, mode) }; })
+      .filter(r => r.pick && r.pick.status !== 'done' && r.pick.ep.uri !== (resume && resume.uri));
+    rows.sort((a, b) => RANK[a.pick.status] - RANK[b.pick.status] || String(b.pick.ep.release_date).localeCompare(String(a.pick.ep.release_date)));
+    if (!rows.length) main.append(h('div', { class: 'hint', text: 'You are up to date with every show you follow.' }));
+    const l = h('div', { class: 'list' }); rows.slice(0, 4).forEach(r => l.append(showRow(r.s, r.mode, r.pick))); main.append(l);
+  }
+  // 4. favourite playlists (or recently played ones until you star some)
+  const all = visibleLists();
+  const fav = all.filter(x => state.pins.has(x.uri));
+  const pick = fav.length ? fav : all.filter(x => state.recent[x.uri]).sort((a, b) => state.recent[b.uri] - state.recent[a.uri]);
+  main.append(nowSection(fav.length ? 'Favourite playlists' : 'Recent playlists', 'All playlists', 'lists'));
+  if (!state.lists) main.append(h('div', { class: 'hint', text: 'Loading your playlists…' }));
+  else if (!pick.length) main.append(h('div', { class: 'hint', text: 'Star playlists on the Playlists tab to keep them here.' }));
+  else { const l = h('div', { class: 'list' }); pick.slice(0, 4).forEach(x => l.append(listRow(x))); main.append(l); }
+}
+
 /* ---------- voice commands ---------- */
 const NUMS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, forty: 40, 'forty five': 45, fifty: 50, sixty: 60, ninety: 90 };
 function norm(t) { return (t || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
@@ -2253,6 +2372,7 @@ function render() {
     h('span', { text: 'New features need one more Spotify approval: liking songs, saving to playlists, no-repeat shuffle, your top lists and new releases from artists you follow. Playback keeps working meanwhile.' }),
     h('button', { class: 'ghost', type: 'button', onclick: () => login() }, 'Reconnect')));
   if (searching) renderSearch(main);
+  else if (state.tab === 'now') renderNow(main);
   else if (state.tab === 'pods') renderPods(main);
   else if (state.tab === 'lists') renderLists(main);
   else if (state.tab === 'hist') renderHistory(main);
@@ -2266,6 +2386,7 @@ function render() {
   if (focusId) { const s = $(focusId); if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); } }
 }
 function loadTab() {
+  if (state.tab === 'now') { loadShows(); loadLists(); return; }
   if (state.tab === 'pods') loadShows(); else if (state.tab === 'lists') loadLists();
   else if (state.tab === 'hist') { if (S.get('histView', 'pods') === 'songs') loadHistSongs(); else loadShows(); }
   else loadLibView();
@@ -2344,7 +2465,7 @@ async function boot() {
     try { await handleCallback(params); } catch (e) { renderSetup(e.message); return; }
   }
   if (!S.get('clientId') || !S.get('tokens')) { renderSetup(); return; }
-  state.tab = 'hist';
+  state.tab = 'now';
   if (state.libView === 'history') state.libView = 'liked';
   render(); loadTab();
   if (state.tab !== 'pods') loadShows(); // shows feed routines, search and the New inbox
