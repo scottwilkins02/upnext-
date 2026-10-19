@@ -174,6 +174,10 @@ footer { padding-block: 30px; display: flex; flex-direction: column; gap: 12px; 
 footer .links { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
 footer small { color: var(--muted); text-align: center; }
 button:active { opacity: .78; }
+.icon.rm { color: var(--muted); }
+.icon.rm.confirm { width: auto; padding: 0 12px; border-radius: 999px; background: var(--warn); color: var(--surface); font-size: 12.5px; font-weight: 600; }
+.row { transition: opacity .25s ease; }
+.row.gone { opacity: 0; }
 button[aria-busy="true"] { opacity: .5; pointer-events: none; }
 .icon.done, .icon.txt.done { color: var(--new); }
 .play.done { background: var(--new); color: var(--surface); }
@@ -369,6 +373,35 @@ async function feedback(btn, fn, opts = {}) {
   setTimeout(() => { if (!btn.isConnected) return; btn.classList.remove('done'); if (!btn.classList.contains('txt')) btn.innerHTML = html; if (label) btn.setAttribute('aria-label', label); }, 1600);
 }
 const busy = (btn, fn) => feedback(btn, fn, { busyOnly: true });
+/* An X that removes its row. Things that change your Spotify account need a second tap to confirm;
+   things only kept in Up Next go straight away. action() returns true when it worked. */
+function removeBtn(label, action, opts = {}) {
+  const b = h('button', { class: 'icon rm', type: 'button', 'aria-label': label, html: ICON.close });
+  let armed = null;
+  b.addEventListener('click', async ev => {
+    ev.stopPropagation();
+    if (opts.confirm && !armed) {
+      b.classList.add('confirm'); b.textContent = opts.confirmText || 'Remove'; b.setAttribute('aria-label', 'Tap again to confirm: ' + label);
+      armed = setTimeout(() => { armed = null; if (b.isConnected) { b.classList.remove('confirm'); b.innerHTML = ICON.close; b.setAttribute('aria-label', label); } }, 3500);
+      return;
+    }
+    clearTimeout(armed); armed = null;
+    b.setAttribute('aria-busy', 'true');
+    let ok = false;
+    try { ok = (await action()) === true; } catch (e) { toast(friendly(e), 5000); }
+    b.removeAttribute('aria-busy');
+    if (!ok) { b.classList.remove('confirm'); b.innerHTML = ICON.close; b.setAttribute('aria-label', label); return; }
+    const r = b.closest('.row');
+    if (r) { r.classList.add('gone'); setTimeout(() => r.remove(), 260); }
+    if (opts.after) setTimeout(opts.after, 280);
+  });
+  return b;
+}
+async function libraryRemove(uri, scope) {
+  if (scope && !hasScope(scope)) { toast('Reconnect Spotify (banner at the top) to allow removing things.', 5000); return false; }
+  await api('/me/library?uris=' + enc(uri), { method: 'DELETE' });
+  return true;
+}
 const enc = encodeURIComponent;
 
 /* ---------- auth (Authorization Code with PKCE) ---------- */
@@ -646,6 +679,11 @@ function showRow(s, mode, pick) {
           mode === 'order' ? 'In order · switch to newest' : 'Newest · switch to in order'),
         following.length ? h('button', { class: 'linkish', type: 'button', onclick: ev => { ev.stopPropagation(); bingeShow(s, pick, following); } },
           'Play this + next ' + following.length + ' in order') : null)],
+    extra: [removeBtn('Unfollow ' + s.show.name, async () => {
+      if (!(await libraryRemove(s.show.uri, 'user-library-modify'))) return false;
+      state.shows = state.shows.filter(x => x.show.id !== s.show.id); S.set('showsCache', { at: state.showsAt, list: state.shows });
+      toast('Unfollowed ' + s.show.name); return true;
+    }, { confirm: true, confirmText: 'Unfollow' })],
     onPlay: () => play({ uris: [ep.uri], position_ms: pick.status === 'resume' ? rp.resume_position_ms : 0 }, ep.name, null, ep.url) });
 }
 function bingeShow(s, pick, following) {
@@ -717,8 +755,21 @@ function listRow(p) {
     extra: [
       isOwn(p) && hasScope('playlist-modify-private') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Shuffle ' + p.name + ' with no repeats', html: ICON.shuffle, onclick: e => busy(e.currentTarget, () => smartShuffle(p)) }) : null,
       h('button', { class: 'icon', type: 'button', 'aria-pressed': String(pinned), 'aria-label': (pinned ? 'Remove ' : 'Add ') + (p.name || 'playlist') + (pinned ? ' from' : ' to') + ' favourites',
-        html: pinned ? ICON.starOn : ICON.starOff, onclick: () => togglePin(p.uri) })],
+        html: pinned ? ICON.starOn : ICON.starOff, onclick: () => togglePin(p.uri) }),
+      removeBtn((isOwn(p) && !p.collaborative ? 'Delete ' : 'Remove ') + (p.name || 'playlist'), async () => {
+        if (!hasScope('playlist-modify-private')) { toast('Reconnect Spotify (banner at the top) to allow removing playlists.', 5000); return false; }
+        await api('/me/library?uris=' + enc(p.uri), { method: 'DELETE' });
+        state.lists = state.lists.filter(x => x.uri !== p.uri); S.set('listsCache', { at: state.listsAt, lists: state.lists, recent: state.recent });
+        if (state.pins.delete(p.uri)) S.set('pins', [...state.pins]);
+        toast((isOwn(p) && !p.collaborative ? 'Deleted ' : 'Removed ') + (p.name || 'playlist')); return true;
+      }, { confirm: true, confirmText: isOwn(p) && !p.collaborative ? 'Delete' : 'Remove', after: render })],
     onPlay: () => play({ context_uri: p.uri }, p.name, null, p.url) });
+}
+async function removeFromPlaylist(p, t) {
+  if (!hasScope('playlist-modify-private')) { toast('Reconnect Spotify (banner at the top) to allow editing playlists.', 5000); return false; }
+  await api('/playlists/' + p.id + '/items', { method: 'DELETE', body: { items: [{ uri: t.uri }] } });
+  if (p.total) p.total--;
+  toast('Removed ' + t.name + ' from ' + p.name); return true;
 }
 async function playlistTracks(p, cap = 500) {
   const items = await getAll('/playlists/' + p.id + '/items?limit=50', cap);
@@ -840,11 +891,18 @@ function renderLib(main) {
   const list = h('div', { class: 'list' });
   if (v === 'episodes') {
     if (!data.length) list.append(h('div', { class: 'empty', text: 'No saved episodes. Tap + on an episode in Spotify to save it.' }));
-    for (const e of data) list.append(episodeRow(e, e.show && e.show.name, e.images || (e.show && e.show.images)));
+    for (const e of data) list.append(episodeRow(e, e.show && e.show.name, e.images || (e.show && e.show.images), [removeBtn('Remove ' + e.name + ' from saved episodes', async () => {
+      if (!(await libraryRemove(e.uri, 'user-library-modify'))) return false;
+      state.lib.episodes = state.lib.episodes.filter(x => x.uri !== e.uri); toast('Removed from saved episodes'); return true;
+    }, { confirm: true })]));
   } else if (v === 'books') {
     main.append(h('button', { class: 'primary', type: 'button', style: 'width:100%;margin-top:4px', onclick: openBookFinder }, 'Find great audiobooks'));
     if (!data.length) list.append(h('div', { class: 'empty', text: 'No saved audiobooks yet.' }));
     for (const b of data) list.append(row({ img: b.images, kicker: artistNames(b.authors), title: b.name, sub: [subLine(b.total_chapters ? b.total_chapters + ' chapters' : null)],
+      extra: [removeBtn('Remove ' + b.name + ' from your audiobooks', async () => {
+        if (!(await libraryRemove(b.uri, 'user-library-modify'))) return false;
+        state.lib.books = state.lib.books.filter(x => x.uri !== b.uri); toast('Removed ' + cleanTitle(b.name)); return true;
+      }, { confirm: true })],
       onOpen: () => openBook(b), onPlay: () => play({ context_uri: b.uri }, b.name, null, b.external_urls && b.external_urls.spotify) }));
   } else if (v === 'top') {
     main.append(h('div', { class: 'section', text: 'Top songs' }));
@@ -888,12 +946,12 @@ async function loadLibView(force = false) {
   } catch (e) { if (handleAuthError(e)) return; e.message = friendly(e); state.libErr[key] = e; }
   state.libLoading[key] = false; render();
 }
-function trackRow(t, onPlay, kicker) {
+function trackRow(t, onPlay, kicker, extra) {
   const img = t.album ? t.album.images : t.img;
   const album = t.album && t.album.id ? t.album : t.albumId ? { id: t.albumId, name: t.albumName, uri: 'spotify:album:' + t.albumId } : null;
   return row({ img: img || null, kicker, title: t.name, onOpen: album ? () => openAlbum(album) : null,
     sub: [subLine(t.artistsText || artistNames(t.artists), t.album && t.album.name ? t.album.name : t.albumName)],
-    onQueue: () => queueUri(t.uri, t.name), onPlay });
+    extra, onQueue: () => queueUri(t.uri, t.name), onPlay });
 }
 function artistRow(a, kicker) {
   return row({ img: a.images, round: true, kicker, title: a.name, sub: [subLine('Artist · see discography')], onOpen: () => openArtist(a),
@@ -943,7 +1001,13 @@ function paintLiked() {
   const m = likedMatches(state.likedFilter), shown = m.slice(0, 150), uris = m.map(t => t.uri);
   $('likedCount').textContent = (state.likedFilter ? m.length + ' matches' : m.length + ' songs') + (m.length > shown.length ? ' · showing first ' + shown.length : '') +
     ' · updated ' + new Date(state.liked.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  box.replaceChildren(...shown.map((t, i) => trackRow(t, () => play({ uris: uris.slice(i, i + 100) }, t.name), 'Liked ' + fmtDate(t.added))));
+  box.replaceChildren(...shown.map((t, i) => trackRow(t, () => play({ uris: uris.slice(i, i + 100) }, t.name), 'Liked ' + fmtDate(t.added),
+    [removeBtn('Remove ' + t.name + ' from Liked Songs', async () => {
+      if (!(await libraryRemove(t.uri, 'user-library-modify'))) return false;
+      state.liked.tracks = state.liked.tracks.filter(x => x.uri !== t.uri); S.set('likedCache', state.liked);
+      if (state.likeUri === t.uri) { state.liked1 = false; paintLike(); }
+      toast('Removed from Liked Songs'); return true;
+    }, { confirm: true })])));
   if (!m.length) box.append(h('div', { class: 'empty', text: 'No liked songs match "' + state.likedFilter + '".' }));
 }
 
@@ -1089,8 +1153,9 @@ function openPlaylist(p) {
       p.url ? h('a', { class: 'ghost', href: p.url, target: '_blank', rel: 'noopener' }, 'Open in Spotify') : null); return; }
     const tracks = await playlistTracks(p, 300);
     const l = h('div', { class: 'list' });
-    tracks.forEach((t, i) => l.append(t.type === 'episode' ? episodeRow(t, t.show && t.show.name, t.images)
+    tracks.forEach((t, i) => l.append(t.type === 'episode' ? episodeRow(t, t.show && t.show.name, t.images, [removeBtn('Remove ' + t.name + ' from ' + p.name, () => removeFromPlaylist(p, t), { confirm: true })])
       : row({ img: t.album && t.album.images, title: t.name, sub: [subLine(artistNames(t.artists), t.album && t.album.name)], onOpen: t.album ? () => openAlbum(t.album) : null,
+        extra: [removeBtn('Remove ' + t.name + ' from ' + p.name, () => removeFromPlaylist(p, t), { confirm: true })],
         onQueue: () => queueUri(t.uri, t.name), onPlay: () => play({ context_uri: p.uri, offset: { position: i } }, t.name) })));
     box.append(l);
   });
@@ -1533,6 +1598,7 @@ function renderPodHist(main) {
     l.append(row({ img: sh && sh.show.images, kicker: x.show, title: x.name,
       sub: [subLine(x.done ? h('span', { class: 'pill done', text: 'Finished' }) : h('span', { class: 'pill resume', text: fmtDur(left) + ' left' }), when)],
       onOpen: sh ? () => openShow(sh.show) : null,
+      extra: [removeBtn('Remove ' + x.name + ' from history', () => { S.set('podHist', podHist().filter(y => y.id !== x.id)); return true; })],
       onQueue: () => queueUri(x.uri, x.name),
       playLabel: x.done ? 'Play again ' : 'Resume ',
       onPlay: () => play({ uris: [x.uri], position_ms: x.done ? 0 : (x.pos || 0) }, x.name) }));
@@ -1603,7 +1669,9 @@ function renderReleases(main) {
   if (!r.artists) { main.append(h('div', { class: 'empty', text: 'You do not follow any artists yet. Follow artists in Spotify to see their new music here.' })); return; }
   if (!r.items.length) { main.append(h('div', { class: 'empty', text: 'No new releases from artists you follow in the last 30 days.' })); return; }
   const l = h('div', { class: 'list' });
-  for (const al of r.items) l.append(row({ img: al.images, kicker: artistNames(al.artists), title: al.name,
+  const hidden = new Set(S.get('relHidden', []));
+  for (const al of r.items.filter(x => !hidden.has(x.id))) l.append(row({ img: al.images, kicker: artistNames(al.artists), title: al.name,
+    extra: [removeBtn('Hide ' + al.name, () => { const hd = S.get('relHidden', []); hd.push(al.id); S.set('relHidden', hd.slice(-500)); return true; })],
     sub: [subLine(h('span', { class: 'pill new', text: fmtDate(al.release_date) }), al.album_type === 'single' ? 'Single or EP' : 'Album', al.total_tracks ? al.total_tracks + ' tracks' : null)],
     onOpen: () => openAlbum(al), onPlay: () => play({ context_uri: al.uri }, al.name, null, al.url) }));
   main.append(l);
