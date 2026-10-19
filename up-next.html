@@ -177,6 +177,21 @@ button:active { opacity: .78; }
 .icon.rm { color: var(--muted); }
 .icon.rm.confirm { width: auto; padding: 0 12px; border-radius: 999px; background: var(--warn); color: var(--surface); font-size: 12.5px; font-weight: 600; }
 .row { transition: opacity .25s ease; }
+.morewrap { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 8; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / .2); padding: 6px; display: flex; flex-direction: column; gap: 2px; min-width: 210px; max-width: 78vw; }
+.menu[hidden] { display: none; }
+.menu .mi { width: 100%; height: 44px; border-radius: 8px; display: flex; align-items: center; justify-content: flex-start; gap: 12px; padding: 0 12px; color: var(--ink); }
+.menu .mi::after { content: attr(data-short); font-size: 14.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu .mi.rm { color: var(--warn); }
+.menu .mi.icon.rm.confirm { width: 100%; justify-content: center; }
+.menu .mi.confirm::after { content: none; }
+.menu .mi.done { color: var(--new); }
+@media (max-width: 600px) {
+  .row { grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; }
+  .row img, .row .ph { width: 48px; height: 48px; }
+  .title { -webkit-line-clamp: 3; }
+}
 .row.gone { opacity: 0; }
 button[aria-busy="true"] { opacity: .5; pointer-events: none; }
 .icon.done, .icon.txt.done { color: var(--new); }
@@ -330,6 +345,7 @@ const ICON = {
   heartOff: '<svg viewBox="0 0 24 24"><path d="M16.5 3c-1.7 0-3.4.8-4.5 2.1C10.9 3.8 9.2 3 7.5 3 4.4 3 2 5.4 2 8.5c0 3.8 3.4 6.9 8.5 11.5L12 21.4l1.5-1.3C18.6 15.4 22 12.3 22 8.5 22 5.4 19.6 3 16.5 3zm-4.4 15.6l-.1.1-.1-.1C7.1 14.2 4 11.4 4 8.5 4 6.5 5.5 5 7.5 5c1.5 0 3 1 3.6 2.4h1.9C13.5 6 15 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.9-3.1 5.7-7.9 10.1z"/></svg>',
   shuffle: '<svg viewBox="0 0 24 24"><path d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4zm.3 9.4l-1.4 1.4 3.1 3.1-2 2H20v-5.5l-2 2z"/></svg>',
   close: '<svg viewBox="0 0 24 24"><path d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg>',
+  more: '<svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>',
   bolt: '<svg viewBox="0 0 24 24"><path d="M11 21h-1l1-7H7.5c-.6 0-.6-.3-.4-.7L13 3h1l-1 7h3.5c.5 0 .6.3.4.7z"/></svg>',
   plus: '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>'
 };
@@ -376,7 +392,7 @@ const busy = (btn, fn) => feedback(btn, fn, { busyOnly: true });
 /* An X that removes its row. Things that change your Spotify account need a second tap to confirm;
    things only kept in Up Next go straight away. action() returns true when it worked. */
 function removeBtn(label, action, opts = {}) {
-  const b = h('button', { class: 'icon rm', type: 'button', 'aria-label': label, html: ICON.close });
+  const b = h('button', { class: 'icon rm', type: 'button', 'aria-label': label, 'data-short': opts.short || (opts.confirmText || 'Remove'), html: ICON.close });
   let armed = null;
   b.addEventListener('click', async ev => {
     ev.stopPropagation();
@@ -570,10 +586,27 @@ function row({ img, round, kicker, title, sub, onOpen, onPlay, onQueue, extra, p
     kicker && h('div', { class: 'kicker', text: kicker }),
     h('div', { class: 'title', text: title || 'Untitled' }),
     ...(sub || []));
+  const acts = [...(extra || []),
+    onQueue && h('button', { class: 'icon', type: 'button', 'aria-label': 'Add ' + (title || '') + ' to queue', 'data-short': 'Add to queue', html: ICON.queue, onclick: e => feedback(e.currentTarget, onQueue, { doneLabel: 'Added to queue' }) })].filter(Boolean);
   return h('div', { class: 'row' + (round ? ' round' : '') }, art(img), meta,
-    h('div', { class: 'actions' }, ...(extra || []),
-      onQueue && h('button', { class: 'icon', type: 'button', 'aria-label': 'Add ' + (title || '') + ' to queue', html: ICON.queue, onclick: e => feedback(e.currentTarget, onQueue, { doneLabel: 'Added to queue' }) }),
+    h('div', { class: 'actions' }, ...(isNarrow() && acts.length > 1 ? [moreMenu(acts, title)] : acts),
       onPlay && h('button', { class: 'play', type: 'button', 'aria-label': (playLabel || 'Play ') + (title || ''), html: ICON.play, onclick: e => busy(e.currentTarget, onPlay) })));
+}
+/* On phones the secondary buttons (queue, remove, star…) fold into one ⋯ menu so titles get the room. */
+const NARROW = window.matchMedia ? matchMedia('(max-width: 600px)') : { matches: false, addEventListener() {} };
+const isNarrow = () => NARROW.matches;
+function closeMenus(except) { document.querySelectorAll('.menu:not([hidden])').forEach(m => { if (m !== except) m.hidden = true; }); }
+function moreMenu(acts, title) {
+  const menu = h('div', { class: 'menu', role: 'menu', hidden: true, onclick: e => e.stopPropagation() });
+  for (const b of acts) {
+    b.classList.add('mi'); b.setAttribute('role', 'menuitem');
+    if (!b.dataset.short) b.dataset.short = b.getAttribute('aria-label') || '';
+    b.addEventListener('click', () => { if (!b.classList.contains('rm')) setTimeout(() => { menu.hidden = true; }, 0); });
+    menu.append(b);
+  }
+  const more = h('button', { class: 'icon', type: 'button', 'aria-label': 'More actions for ' + (title || 'this item'), 'aria-haspopup': 'menu', html: ICON.more,
+    onclick: e => { e.stopPropagation(); const open = menu.hidden; closeMenus(); menu.hidden = !open; more.setAttribute('aria-expanded', String(open)); } });
+  return h('div', { class: 'morewrap' }, more, menu);
 }
 const subLine = (...bits) => h('div', { class: 'sub' }, ...bits.filter(Boolean).map(b => typeof b === 'string' ? h('span', { text: b }) : b));
 
@@ -645,7 +678,7 @@ function renderPods(main) {
       'Auto-play the next new episode instead of Spotify\'s picks'));
     if (!inbox.length) { main.append(h('div', { class: 'empty', text: 'Nothing new since ' + fmtDate(inboxSince()) + '. New episodes from shows you follow land here.' })); return; }
     for (const { s, e } of inbox) list.append(episodeRow(e, s.show.name, s.show.images, [
-      h('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss ' + e.name, html: ICON.close, onclick: () => dismiss(e.id) })]));
+      h('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss ' + e.name, 'data-short': 'Dismiss', html: ICON.close, onclick: () => dismiss(e.id) })]));
     main.append(list, h('div', { class: 'hint', text: 'Dismissing only hides an episode here. Spotify does not let apps mark episodes as played.' }));
     return;
   }
@@ -683,7 +716,7 @@ function showRow(s, mode, pick) {
       if (!(await libraryRemove(s.show.uri, 'user-library-modify'))) return false;
       state.shows = state.shows.filter(x => x.show.id !== s.show.id); S.set('showsCache', { at: state.showsAt, list: state.shows });
       toast('Unfollowed ' + s.show.name); return true;
-    }, { confirm: true, confirmText: 'Unfollow' })],
+    }, { confirm: true, confirmText: 'Unfollow', short: 'Unfollow show' })],
     onPlay: () => play({ uris: [ep.uri], position_ms: pick.status === 'resume' ? rp.resume_position_ms : 0 }, ep.name, null, ep.url) });
 }
 function bingeShow(s, pick, following) {
@@ -753,8 +786,8 @@ function listRow(p) {
   return row({ img: p.images, title: p.name || 'Untitled playlist', onOpen: () => openPlaylist(p),
     sub: [subLine([p.owner, p.total != null ? p.total + ' items' : null].filter(Boolean).join(' · '))],
     extra: [
-      isOwn(p) && hasScope('playlist-modify-private') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Shuffle ' + p.name + ' with no repeats', html: ICON.shuffle, onclick: e => busy(e.currentTarget, () => smartShuffle(p)) }) : null,
-      h('button', { class: 'icon', type: 'button', 'aria-pressed': String(pinned), 'aria-label': (pinned ? 'Remove ' : 'Add ') + (p.name || 'playlist') + (pinned ? ' from' : ' to') + ' favourites',
+      isOwn(p) && hasScope('playlist-modify-private') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Shuffle ' + p.name + ' with no repeats', 'data-short': 'No-repeat shuffle', html: ICON.shuffle, onclick: e => busy(e.currentTarget, () => smartShuffle(p)) }) : null,
+      h('button', { class: 'icon', type: 'button', 'aria-pressed': String(pinned), 'data-short': pinned ? 'Remove from favourites' : 'Add to favourites', 'aria-label': (pinned ? 'Remove ' : 'Add ') + (p.name || 'playlist') + (pinned ? ' from' : ' to') + ' favourites',
         html: pinned ? ICON.starOn : ICON.starOff, onclick: () => togglePin(p.uri) }),
       removeBtn((isOwn(p) && !p.collaborative ? 'Delete ' : 'Remove ') + (p.name || 'playlist'), async () => {
         if (!hasScope('playlist-modify-private')) { toast('Reconnect Spotify (banner at the top) to allow removing playlists.', 5000); return false; }
@@ -1761,7 +1794,7 @@ function bookRow(b, r, saved) {
     sub: [subLine(h('span', { class: r && r.avg >= 4 ? 'pill new' : 'pill done', text: stars(r) }), b.total_chapters ? b.total_chapters + ' chapters' : null),
       narr ? subLine('Read by ' + narr) : null],
     extra: [saved ? h('button', { class: 'icon done', type: 'button', disabled: true, 'aria-label': 'Already in your audiobooks', html: ICON_TICK })
-      : hasScope('user-library-modify') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Save ' + b.name + ' to your audiobooks', html: ICON.plus,
+      : hasScope('user-library-modify') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Save ' + b.name + ' to your audiobooks', 'data-short': 'Save to audiobooks', html: ICON.plus,
         onclick: e => feedback(e.currentTarget, () => saveBook(b), { keep: true, doneLabel: 'Saved to your audiobooks' }) }) : null],
     onPlay: () => play({ context_uri: b.uri }, b.name, null, b.external_urls && b.external_urls.spotify) });
 }
@@ -2271,6 +2304,8 @@ async function boot() {
   $('q').addEventListener('input', e => onSearchInput(e.target.value));
   $('q').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(searchTimer); if (state.q.trim().length >= 2) runSearch(state.q.trim()); e.target.blur(); } });
   $('qmic').addEventListener('click', startVoice);
+  document.addEventListener('click', () => closeMenus());
+  NARROW.addEventListener('change', () => render());
   $('qclear').addEventListener('click', () => { $('q').value = ''; onSearchInput(''); $('q').focus(); });
   $('deviceBtn').addEventListener('click', () => { pendingPlay = null; openDevices(); });
   $('devRefresh').addEventListener('click', openDevices);
