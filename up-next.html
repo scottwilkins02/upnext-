@@ -173,7 +173,12 @@ dialog p { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
 footer { padding-block: 30px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 footer .links { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
 footer small { color: var(--muted); text-align: center; }
-@media (prefers-reduced-motion: no-preference) { .play:active, .icon:active, .chip:active, .routine:active { transform: scale(.94); } }
+button:active { opacity: .78; }
+button[aria-busy="true"] { opacity: .5; pointer-events: none; }
+.icon.done, .icon.txt.done { color: var(--new); }
+.play.done { background: var(--new); color: var(--surface); }
+.ghost.done { color: var(--new); border-color: var(--new); }
+@media (prefers-reduced-motion: no-preference) { .ghost:active, .primary:active, .play:active, .icon:active, .chip:active, .routine:active { transform: scale(.94); } }
 </style>
 </head>
 <body>
@@ -340,10 +345,30 @@ function h(tag, props, ...kids) {
 }
 let toastTimer;
 function toast(msg, ms = 3500) {
-  const t = $('toast'); t.textContent = msg; t.hidden = false;
+  const t = $('toast');
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  if (t.parentNode !== host) host.append(t);
+  t.textContent = msg; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const ICON_TICK = '<svg viewBox="0 0 24 24"><path d="M9 16.2l-3.5-3.5L4 14.2l5 5 11-11-1.4-1.4z"/></svg>';
+/* Shows a button as busy while its action runs, then a tick when it succeeds.
+   fn is called straight away (inside the tap) so iOS still allows audio to start. */
+async function feedback(btn, fn, opts = {}) {
+  if (!btn || btn.getAttribute('aria-busy') === 'true') return;
+  const html = btn.innerHTML, label = btn.getAttribute('aria-label');
+  btn.setAttribute('aria-busy', 'true');
+  let ok = false;
+  try { ok = (await fn()) === true; } catch { ok = false; } finally { btn.removeAttribute('aria-busy'); }
+  if (!ok || opts.busyOnly) return;
+  btn.classList.add('done');
+  if (!btn.classList.contains('txt')) { if (btn.classList.contains('icon') || btn.classList.contains('play')) btn.innerHTML = ICON_TICK; else btn.textContent = opts.doneText || 'Done'; }
+  if (opts.doneLabel) btn.setAttribute('aria-label', opts.doneLabel);
+  if (opts.keep) { btn.disabled = true; return; }
+  setTimeout(() => { if (!btn.isConnected) return; btn.classList.remove('done'); if (!btn.classList.contains('txt')) btn.innerHTML = html; if (label) btn.setAttribute('aria-label', label); }, 1600);
+}
+const busy = (btn, fn) => feedback(btn, fn, { busyOnly: true });
 const enc = encodeURIComponent;
 
 /* ---------- auth (Authorization Code with PKCE) ---------- */
@@ -514,8 +539,8 @@ function row({ img, round, kicker, title, sub, onOpen, onPlay, onQueue, extra, p
     ...(sub || []));
   return h('div', { class: 'row' + (round ? ' round' : '') }, art(img), meta,
     h('div', { class: 'actions' }, ...(extra || []),
-      onQueue && h('button', { class: 'icon', type: 'button', 'aria-label': 'Add ' + (title || '') + ' to queue', html: ICON.queue, onclick: onQueue }),
-      onPlay && h('button', { class: 'play', type: 'button', 'aria-label': (playLabel || 'Play ') + (title || ''), html: ICON.play, onclick: onPlay })));
+      onQueue && h('button', { class: 'icon', type: 'button', 'aria-label': 'Add ' + (title || '') + ' to queue', html: ICON.queue, onclick: e => feedback(e.currentTarget, onQueue, { doneLabel: 'Added to queue' }) }),
+      onPlay && h('button', { class: 'play', type: 'button', 'aria-label': (playLabel || 'Play ') + (title || ''), html: ICON.play, onclick: e => busy(e.currentTarget, onPlay) })));
 }
 const subLine = (...bits) => h('div', { class: 'sub' }, ...bits.filter(Boolean).map(b => typeof b === 'string' ? h('span', { text: b }) : b));
 
@@ -690,7 +715,7 @@ function listRow(p) {
   return row({ img: p.images, title: p.name || 'Untitled playlist', onOpen: () => openPlaylist(p),
     sub: [subLine([p.owner, p.total != null ? p.total + ' items' : null].filter(Boolean).join(' · '))],
     extra: [
-      isOwn(p) && hasScope('playlist-modify-private') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Shuffle ' + p.name + ' with no repeats', html: ICON.shuffle, onclick: () => smartShuffle(p) }) : null,
+      isOwn(p) && hasScope('playlist-modify-private') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Shuffle ' + p.name + ' with no repeats', html: ICON.shuffle, onclick: e => busy(e.currentTarget, () => smartShuffle(p)) }) : null,
       h('button', { class: 'icon', type: 'button', 'aria-pressed': String(pinned), 'aria-label': (pinned ? 'Remove ' : 'Add ') + (p.name || 'playlist') + (pinned ? ' from' : ' to') + ' favourites',
         html: pinned ? ICON.starOn : ICON.starOff, onclick: () => togglePin(p.uri) })],
     onPlay: () => play({ context_uri: p.uri }, p.name, null, p.url) });
@@ -726,7 +751,7 @@ function routines() { return S.get('routines', []); }
 function renderRoutines(main) {
   const rs = routines();
   main.append(h('div', { class: 'routines' },
-    ...rs.map(r => h('button', { class: 'routine', type: 'button', onclick: () => runRoutine(r),
+    ...rs.map(r => h('button', { class: 'routine', type: 'button', onclick: e => busy(e.currentTarget, () => runRoutine(r)),
       oncontextmenu: ev => { ev.preventDefault(); editRoutine(r); } }, h('span', { html: ICON.bolt }), r.name)),
     rs.length ? h('button', { class: 'routine add', type: 'button', onclick: () => editRoutine(null, true) }, 'Edit') : null,
     h('button', { class: 'routine add', type: 'button', onclick: () => editRoutine(null) }, h('span', { html: ICON.plus }), rs.length ? 'New' : 'New routine')));
@@ -1023,7 +1048,7 @@ function openArtist(a) {
     const albums = items.filter(x => x && !seen.has(x.name.toLowerCase() + x.album_type) && seen.add(x.name.toLowerCase() + x.album_type))
       .sort((x, y) => String(y.release_date).localeCompare(String(x.release_date)));
     box.append(h('div', { class: 'bar' }, h('small', { text: albums.length + ' releases, newest first' }),
-      h('button', { class: 'ghost', type: 'button', onclick: () => play({ context_uri: a.uri }, a.name) }, 'Play artist')));
+      h('button', { class: 'ghost', type: 'button', onclick: e => busy(e.currentTarget, () => play({ context_uri: a.uri }, a.name)) }, 'Play artist')));
     const l = h('div', { class: 'list' });
     for (const al of albums) l.append(row({ img: al.images, title: al.name, sub: [subLine((al.release_date || '').slice(0, 4), al.album_type === 'single' ? 'Single or EP' : 'Album', al.total_tracks ? al.total_tracks + ' tracks' : null)],
       onOpen: () => openAlbum(al), onPlay: () => play({ context_uri: al.uri }, al.name, null, al.external_urls && al.external_urls.spotify) }));
@@ -1034,7 +1059,7 @@ function openAlbum(al) {
   openSheet(al.name, async box => {
     const tracks = (await getAll('/albums/' + al.id + '/tracks?limit=50', 200)).filter(Boolean);
     box.append(h('div', { class: 'bar' }, h('small', { text: [artistNames(al.artists), (al.release_date || '').slice(0, 4)].filter(Boolean).join(' · ') }),
-      h('button', { class: 'ghost', type: 'button', onclick: () => play({ context_uri: al.uri }, al.name) }, 'Play album')));
+      h('button', { class: 'ghost', type: 'button', onclick: e => busy(e.currentTarget, () => play({ context_uri: al.uri }, al.name)) }, 'Play album')));
     const l = h('div', { class: 'list' });
     tracks.forEach((t, i) => l.append(row({ img: al.images, kicker: (t.track_number || i + 1) + '.', title: t.name, sub: [subLine(artistNames(t.artists), fmtClock(t.duration_ms))],
       onQueue: () => queueUri(t.uri, t.name), onPlay: () => play({ context_uri: al.uri, offset: { position: i } }, t.name) })));
@@ -1059,7 +1084,7 @@ function openShow(show) {
 function openPlaylist(p) {
   openSheet(p.name, async box => {
     box.append(h('div', { class: 'bar' }, h('small', { text: [p.owner, p.total != null ? p.total + ' items' : null].filter(Boolean).join(' · ') }),
-      h('button', { class: 'ghost', type: 'button', onclick: () => play({ context_uri: p.uri }, p.name, null, p.url) }, 'Play')));
+      h('button', { class: 'ghost', type: 'button', onclick: e => busy(e.currentTarget, () => play({ context_uri: p.uri }, p.name, null, p.url)) }, 'Play')));
     if (!isOwn(p)) { box.append(h('div', { class: 'hint', text: 'Spotify only lets apps list songs in playlists you made or collaborate on. Tap Play, or open it in Spotify.' }),
       p.url ? h('a', { class: 'ghost', href: p.url, target: '_blank', rel: 'noopener' }, 'Open in Spotify') : null); return; }
     const tracks = await playlistTracks(p, 300);
@@ -1239,9 +1264,11 @@ async function queueUri(uri, name) {
   try {
     await api('/me/player/queue?uri=' + enc(uri) + (dev ? '&device_id=' + enc(dev) : ''), { method: 'POST' });
     toast('Added to queue: ' + (name || ''));
+    return true;
   } catch (e) {
-    if (handleAuthError(e)) return;
+    if (handleAuthError(e)) return false;
     toast(e.status === 404 ? 'Start something playing first, then add to the queue.' : friendly(e), 5000);
+    return false;
   }
 }
 async function queueMany(uris, dev, label) {
@@ -1348,9 +1375,9 @@ async function saveToPlaylist(choose) {
     });
     return;
   }
-  if (!it || it.type === 'episode') return;
-  try { await api('/playlists/' + sp.id + '/items', { method: 'POST', body: { uris: [it.uri] } }); toast('Added to ' + sp.name); }
-  catch (e) { if (e.status === 404) { S.del('savePl'); toast('That playlist no longer exists. Pick another.'); paintPlayer(); } else toast(friendly(e), 5000); }
+  if (!it || it.type === 'episode') return false;
+  try { await api('/playlists/' + sp.id + '/items', { method: 'POST', body: { uris: [it.uri] } }); toast('Added to ' + sp.name); return true; }
+  catch (e) { if (e.status === 404) { S.del('savePl'); toast('That playlist no longer exists. Pick another.'); paintPlayer(); } else toast(friendly(e), 5000); return false; }
 }
 /* Position: Spotify only reports it now and then, so estimate it between reports from the clock. */
 const pos = { ms: 0, dur: 0, at: 0, playing: false, dragging: false };
@@ -1647,24 +1674,32 @@ async function findBooks(box, st) {
     box.replaceChildren(
       h('div', { class: 'bar' }, h('small', { text: list.length + ' of ' + books.length + ' audiobooks' + (st.min ? ' rated ' + st.min + '+' : '') + ' · ' + rated.length + ' had ratings' }), backToFinder(box, st)));
     if (!list.length) box.append(h('div', { class: 'empty', text: 'None of these met the rating filter. Try a lower minimum rating, or "Any".' }));
+    const have = new Set();
+    if (list.length && hasScope('user-library-read')) {
+      const uris = list.slice(0, 40).map(x => x.b.uri);
+      const res = await api('/me/library/contains?uris=' + uris.map(enc).join(',')).catch(() => null);
+      if (Array.isArray(res)) res.forEach((v, i) => { if (v) have.add(uris[i]); });
+    }
     const l = h('div', { class: 'list' });
-    for (const { b, r } of list) l.append(bookRow(b, r));
+    for (const { b, r } of list) l.append(bookRow(b, r, have.has(b.uri)));
     box.append(l, h('div', { class: 'hint', text: 'Ratings come from Open Library readers, matched by title and author, so they rate the book rather than the narration, and a few may match the wrong edition. Spotify does not share its own ratings with apps.' }));
   } catch (e) { if (handleAuthError(e)) return; box.replaceChildren(h('div', { class: 'err', text: friendly(e) }), backToFinder(box, st)); }
 }
 function backToFinder(box, st) { return h('button', { class: 'ghost', type: 'button', onclick: () => { box.replaceChildren(); paintBookFinder(box, st); } }, 'Change search'); }
 function stars(r) { return r && r.avg ? '★ ' + r.avg.toFixed(1) + ' (' + r.count.toLocaleString('en-GB') + ')' : 'No rating yet'; }
-function bookRow(b, r) {
+function bookRow(b, r, saved) {
   const narr = (b.narrators || []).map(x => x.name).slice(0, 2).join(', ');
   return row({ img: b.images, kicker: artistNames(b.authors), title: b.name, onOpen: () => openBook(b, r),
     sub: [subLine(h('span', { class: r && r.avg >= 4 ? 'pill new' : 'pill done', text: stars(r) }), b.total_chapters ? b.total_chapters + ' chapters' : null),
       narr ? subLine('Read by ' + narr) : null],
-    extra: [hasScope('user-library-modify') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Save ' + b.name + ' to your library', html: ICON.plus, onclick: () => saveBook(b) }) : null],
+    extra: [saved ? h('button', { class: 'icon done', type: 'button', disabled: true, 'aria-label': 'Already in your audiobooks', html: ICON_TICK })
+      : hasScope('user-library-modify') ? h('button', { class: 'icon', type: 'button', 'aria-label': 'Save ' + b.name + ' to your audiobooks', html: ICON.plus,
+        onclick: e => feedback(e.currentTarget, () => saveBook(b), { keep: true, doneLabel: 'Saved to your audiobooks' }) }) : null],
     onPlay: () => play({ context_uri: b.uri }, b.name, null, b.external_urls && b.external_urls.spotify) });
 }
 async function saveBook(b) {
-  try { await api('/me/library?uris=' + enc(b.uri), { method: 'PUT' }); toast('Saved ' + cleanTitle(b.name) + ' to your audiobooks'); delete state.lib.books; }
-  catch (e) { toast(friendly(e)); }
+  try { await api('/me/library?uris=' + enc(b.uri), { method: 'PUT' }); toast('Saved ' + cleanTitle(b.name) + ' to your audiobooks'); delete state.lib.books; return true; }
+  catch (e) { toast(friendly(e)); return false; }
 }
 function openBook(b, r) {
   openSheet(cleanTitle(b.name), async box => {
@@ -1675,10 +1710,10 @@ function openBook(b, r) {
       h('div', { class: 'meta' }, h('div', { class: 'kicker', text: artistNames(full.authors) }), h('div', { class: 'title', text: full.name }),
         subLine(h('span', { class: 'pill ' + (rating && rating.avg >= 4 ? 'new' : 'done'), text: stars(rating) }), full.edition || null, rating && rating.year ? 'First published ' + rating.year : null),
         narr ? subLine('Read by ' + narr) : null),
-      h('div', { class: 'actions' }, h('button', { class: 'play', type: 'button', 'aria-label': 'Play ' + full.name, html: ICON.play, onclick: () => play({ context_uri: full.uri }, full.name) }))));
+      h('div', { class: 'actions' }, h('button', { class: 'play', type: 'button', 'aria-label': 'Play ' + full.name, html: ICON.play, onclick: e => busy(e.currentTarget, () => play({ context_uri: full.uri }, full.name)) }))));
     if (full.description) box.append(h('p', { style: 'color:var(--muted);font-size:14px;line-height:1.5;margin:4px 0 8px;max-width:65ch', text: full.description.length > 900 ? full.description.slice(0, 900) + '…' : full.description }));
     box.append(h('div', { class: 'actions', style: 'gap:8px;flex-wrap:wrap' },
-      hasScope('user-library-modify') ? h('button', { class: 'ghost', type: 'button', onclick: () => saveBook(full) }, 'Save to library') : null,
+      hasScope('user-library-modify') ? h('button', { class: 'ghost', type: 'button', onclick: e => feedback(e.currentTarget, () => saveBook(full), { keep: true, doneText: 'Saved to library' }) }, 'Save to library') : null,
       rating && rating.ol ? h('a', { class: 'ghost', href: rating.ol, target: '_blank', rel: 'noopener' }, 'Reviews on Open Library') : null,
       full.external_urls && full.external_urls.spotify ? h('a', { class: 'ghost', href: full.external_urls.spotify, target: '_blank', rel: 'noopener' }, 'Open in Spotify') : null));
     const ch = ((full.chapters && full.chapters.items) || []).filter(Boolean);
@@ -2198,7 +2233,7 @@ async function boot() {
   $('nowFwd').addEventListener('click', () => seekBy(30000));
   $('nowLike').addEventListener('click', toggleLike);
   $('nowQueue').addEventListener('click', openQueue);
-  $('nowSave').addEventListener('click', () => saveToPlaylist(false));
+  $('nowSave').addEventListener('click', e => feedback(e.currentTarget, () => saveToPlaylist(false)));
   document.addEventListener('visibilitychange', () => { if (document.hidden || !S.get('tokens')) return; if (!$('car').hidden && !wakeLock) keepAwake(); checkLocalAlive(); refreshPlayer(); if (!state.q) loadTab(); });
 
   const params = new URLSearchParams(location.search);
